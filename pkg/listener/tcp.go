@@ -82,6 +82,12 @@ func (l *TCPListener) Status() ListenerStatus {
 	return l.status
 }
 
+// UpdateStats updates the listener statistics
+func (l *TCPListener) UpdateStats(stats map[string]interface{}) {
+	// This method can be used to update statistics from the connection handler
+	// For example, incrementing connection count, bytes sent/received, etc.
+}
+
 // Configure implements the Listener interface
 func (l *TCPListener) Configure(config ListenerConfig) error {
 	l.statusLock.Lock()
