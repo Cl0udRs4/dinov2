@@ -1,0 +1,18 @@
+{
+  "listeners": [
+    {
+      "id": "tcp1",
+      "type": "tcp",
+      "address": "127.0.0.1",
+      "port": 8080,
+      "options": {}
+    },
+    {
+      "id": "tcp2",
+      "type": "tcp",
+      "address": "127.0.0.1",
+      "port": 8081,
+      "options": {}
+    }
+  ]
+}
