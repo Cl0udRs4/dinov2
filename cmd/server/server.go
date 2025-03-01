@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -40,7 +39,7 @@ func NewServer() *Server {
 
 // LoadConfig loads the server configuration from a file
 func (s *Server) LoadConfig(configFile string) error {
-	data, err := ioutil.ReadFile(configFile)
+	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -184,7 +183,7 @@ func CreateDefaultConfig(filename string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	err = ioutil.WriteFile(filename, data, 0644)
+	err = os.WriteFile(filename, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
