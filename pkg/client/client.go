@@ -466,6 +466,11 @@ func (c *Client) handlePacket(packet *protocol.Packet) {
 	case protocol.PacketTypeModuleData:
 		// Module data from server
 		c.processModuleData(packet)
+		
+	case protocol.PacketTypeModuleResponse:
+		// Module response from server
+		fmt.Printf("Received module response from server\n")
+		// This would typically be handled by a module response handler
 
 	case protocol.PacketTypeError:
 		// Error from server
@@ -498,6 +503,58 @@ func (c *Client) processCommand(packet *protocol.Packet) {
 	}
 }
 
+// HandleProtocolSwitchCommand handles a protocol switch command
+func (c *Client) HandleProtocolSwitchCommand(protocol string) error {
+	c.connMutex.Lock()
+	defer c.connMutex.Unlock()
+	
+	// Check if the requested protocol is supported
+	protocolType := ProtocolType(protocol)
+	protocolFound := false
+	for _, p := range c.config.Protocols {
+		if p == protocolType {
+			protocolFound = true
+			break
+		}
+	}
+	
+	if !protocolFound {
+		return fmt.Errorf("unsupported protocol: %s", protocol)
+	}
+	
+	// Create connection for the new protocol
+	newConn, err := c.createConnection(protocolType)
+	if err != nil {
+		return fmt.Errorf("failed to create %s connection: %w", protocol, err)
+	}
+	
+	// Store the old connection for cleanup
+	oldConn := c.conn
+	
+	// Switch to the new connection
+	c.currentProtocol = protocolType
+	c.conn = newConn
+	
+	// Update state
+	c.setState(StateSwitchingProtocol)
+	
+	// Close the old connection
+	if oldConn != nil {
+		oldConn.Close()
+	}
+	
+	// Connect with the new protocol
+	if err := c.conn.Connect(); err != nil {
+		c.setState(StateDisconnected)
+		return fmt.Errorf("failed to connect with new protocol: %w", err)
+	}
+	
+	c.setState(StateConnected)
+	c.lastHeartbeat = time.Now()
+	
+	return nil
+}
+
 // processProtocolSwitch processes a protocol switch request from the server
 func (c *Client) processProtocolSwitch(packet *protocol.Packet) {
 	if len(packet.Data) == 0 {
@@ -507,26 +564,14 @@ func (c *Client) processProtocolSwitch(packet *protocol.Packet) {
 
 	// Extract protocol from packet data
 	protocolStr := string(packet.Data)
-	protocol := ProtocolType(protocolStr)
+	
+	fmt.Printf("Received protocol switch request: %s\n", protocolStr)
 
-	fmt.Printf("Received protocol switch request: %s\n", protocol)
-
-	// Switch to the requested protocol
-	err := c.switchToProtocol(protocol)
+	// Handle the protocol switch command
+	err := c.HandleProtocolSwitchCommand(protocolStr)
 	if err != nil {
 		fmt.Printf("Failed to switch protocol: %v\n", err)
-		return
 	}
-
-	// Reconnect with the new protocol
-	go func() {
-		time.Sleep(500 * time.Millisecond) // Brief delay to allow current connection to close
-		err := c.connect()
-		if err != nil {
-			fmt.Printf("Failed to connect with new protocol: %v\n", err)
-			go c.handleConnectionFailure()
-		}
-	}()
 }
 
 // processKeyExchange processes a key exchange packet from the server

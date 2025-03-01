@@ -55,18 +55,20 @@ type Task struct {
 
 // Manager handles task creation, scheduling, and tracking
 type Manager struct {
-	tasks       map[uint32]*Task
-	nextID      uint32
-	mutex       sync.RWMutex
-	pendingChan chan *Task
+	tasks          map[uint32]*Task
+	nextID         uint32
+	mutex          sync.RWMutex
+	pendingChan    chan *Task
+	priorityQueues map[TaskPriority][]*Task // Tasks organized by priority
 }
 
 // NewManager creates a new task manager
 func NewManager() *Manager {
 	return &Manager{
-		tasks:       make(map[uint32]*Task),
-		nextID:      1,
-		pendingChan: make(chan *Task, 100),
+		tasks:          make(map[uint32]*Task),
+		nextID:         1,
+		pendingChan:    make(chan *Task, 100),
+		priorityQueues: make(map[TaskPriority][]*Task),
 	}
 }
 
@@ -92,6 +94,12 @@ func (m *Manager) CreateTask(taskType TaskType, clientID string, data []byte, pr
 
 	// Add the task to the manager
 	m.tasks[task.ID] = task
+	
+	// Add the task to the appropriate priority queue
+	if _, exists := m.priorityQueues[priority]; !exists {
+		m.priorityQueues[priority] = make([]*Task, 0)
+	}
+	m.priorityQueues[priority] = append(m.priorityQueues[priority], task)
 
 	// Check if the task can be scheduled immediately
 	if len(dependsOn) == 0 {
@@ -154,6 +162,11 @@ func (m *Manager) UpdateTaskStatus(id uint32, status TaskStatus, result []byte, 
 		task.CompletedAt = time.Now()
 		task.Result = result
 		task.Error = errorMsg
+
+		// Remove the task from the priority queue
+		if queue, exists := m.priorityQueues[task.Priority]; exists {
+			m.priorityQueues[task.Priority] = removeTask(queue, id)
+		}
 
 		// If completed, check if any dependent tasks can now be scheduled
 		if status == TaskStatusCompleted {
@@ -230,5 +243,61 @@ func (m *Manager) ListClientTasks(clientID string) []*Task {
 		}
 	}
 
+	return tasks
+}
+
+// ScheduleTasks schedules tasks based on priority
+func (m *Manager) ScheduleTasks() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	
+	// Process high priority tasks first
+	m.scheduleTasksWithPriority(TaskPriorityHigh)
+	
+	// Then normal priority
+	m.scheduleTasksWithPriority(TaskPriorityNormal)
+	
+	// Then low priority
+	m.scheduleTasksWithPriority(TaskPriorityLow)
+}
+
+// scheduleTasksWithPriority schedules tasks with a specific priority
+func (m *Manager) scheduleTasksWithPriority(priority TaskPriority) {
+	tasks, exists := m.priorityQueues[priority]
+	if !exists || len(tasks) == 0 {
+		return
+	}
+	
+	for _, task := range tasks {
+		// Check if all dependencies are completed
+		canSchedule := true
+		for _, depID := range task.DependsOn {
+			depTask, exists := m.tasks[depID]
+			if !exists || depTask.Status != TaskStatusCompleted {
+				canSchedule = false
+				break
+			}
+		}
+		
+		if canSchedule {
+			go func(t *Task) {
+				m.pendingChan <- t
+			}(task)
+			
+			// Remove the task from the priority queue
+			m.priorityQueues[priority] = removeTask(m.priorityQueues[priority], task.ID)
+		}
+	}
+}
+
+// removeTask removes a task from a slice of tasks
+func removeTask(tasks []*Task, id uint32) []*Task {
+	for i, task := range tasks {
+		if task.ID == id {
+			// Remove the task by replacing it with the last element and truncating
+			tasks[i] = tasks[len(tasks)-1]
+			return tasks[:len(tasks)-1]
+		}
+	}
 	return tasks
 }
