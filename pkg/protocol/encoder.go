@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
-	"io"
 )
 
 // Constants for TLV structure

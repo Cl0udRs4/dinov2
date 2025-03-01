@@ -10,7 +10,6 @@ import (
 	"io"
 	"math/big"
 	"strings"
-	"time"
 )
 
 // ObfuscationType represents the type of traffic obfuscation
@@ -330,8 +329,8 @@ func generateRandomInt(min, max int) (int, error) {
 	return min + int(n.Int64()), nil
 }
 
-// GenerateRandomInt64 generates a random int64 between 0 and max
-func GenerateRandomInt64(max int64) int64 {
+// generateRandomInt64 is a local helper function
+func generateRandomInt64(max int64) int64 {
 	if max <= 0 {
 		return 0
 	}
