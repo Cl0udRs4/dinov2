@@ -2,7 +2,6 @@ package client
 
 import (
 	"net"
-	"context"
 	"fmt"
 	"net/url"
 	"time"

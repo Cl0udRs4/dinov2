@@ -17,8 +17,8 @@ const (
 	maxMemoryAllocation = 100 * 1024 * 1024 // 100MB
 )
 
-// detectDebugger checks for the presence of a debugger
-func detectDebugger() bool {
+// detectDebuggerInternal checks for the presence of a debugger
+func detectDebuggerInternal() bool {
 	// Combine multiple detection techniques
 	return detectDebuggerTiming() || 
 	       detectDebuggerEnvironment() || 
@@ -95,8 +95,8 @@ func detectDebuggerTracepoints() bool {
 	return false
 }
 
-// detectSandbox checks for the presence of a sandbox environment
-func detectSandbox() bool {
+// detectSandboxInternal checks for the presence of a sandbox environment
+func detectSandboxInternal() bool {
 	return detectVirtualization() || 
 	       detectArtificialEnvironment() || 
 	       detectAnalysisTools()
