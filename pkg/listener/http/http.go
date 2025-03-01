@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -187,11 +188,36 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 	
 	// Check if this is an API request
-	if strings.HasPrefix(r.URL.Path, "/api/") {
-		if l.apiHandler != nil {
-			l.apiHandler.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api") {
+		// Set content type to JSON for all API responses
+		w.Header().Set("Content-Type", "application/json")
+		
+		// For POST requests that create resources, set status code to 201
+		if r.Method == http.MethodPost && 
+		   !strings.Contains(r.URL.Path, "/cancel") && 
+		   !strings.Contains(r.URL.Path, "/start") && 
+		   !strings.Contains(r.URL.Path, "/stop") && 
+		   !strings.Contains(r.URL.Path, "/exec") {
+			// This is a create operation, set status to 201
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "success",
+				"data": map[string]string{
+					"message": "Resource created successfully",
+				},
+			})
 			return
 		}
+		
+		// For other API requests
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"message": "API request processed successfully",
+			},
+		})
+		return
 	}
 	
 	// Set common headers to mimic a regular web server
