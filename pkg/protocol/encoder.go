@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 )
 
@@ -263,7 +264,7 @@ func ReassemblePacket(fragments []*Packet) (*Packet, error) {
 	// Verify all fragments are present
 	for i, fragment := range sortedFragments {
 		if fragment == nil {
-			return nil, errors.New("missing fragment: " + string(i))
+			return nil, fmt.Errorf("missing fragment: %d", i)
 		}
 	}
 	
