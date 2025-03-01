@@ -121,11 +121,14 @@ func ValidateListenerConfig(listenerType ListenerType, config ListenerConfig) er
 	
 	// Protocol-specific validation
 	switch listenerType {
-	case ListenerTypeTCP, ListenerTypeDNS, ListenerTypeHTTP, ListenerTypeWebSocket:
+	case ListenerTypeTCP, ListenerTypeHTTP, ListenerTypeWebSocket:
 		if config.Port <= 0 || config.Port > 65535 {
 			return errors.New("invalid port number")
 		}
 	case ListenerTypeDNS:
+		if config.Port <= 0 || config.Port > 65535 {
+			return errors.New("invalid port number")
+		}
 		if config.Options == nil || config.Options["domain"] == nil {
 			return errors.New("DNS listener requires a domain")
 		}
