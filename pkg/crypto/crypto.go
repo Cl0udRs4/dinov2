@@ -1,6 +1,9 @@
 package crypto
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Algorithm represents supported encryption algorithms
 type Algorithm string
@@ -26,6 +29,12 @@ type Encryptor interface {
 	
 	// RotateKey rotates the encryption key
 	RotateKey() error
+	
+	// GetKeyFingerprint returns a fingerprint of the current key
+	GetKeyFingerprint() []byte
+	
+	// GetLastRotation returns the time of the last key rotation
+	GetLastRotation() time.Time
 }
 
 // Factory creates encryptors based on algorithm type

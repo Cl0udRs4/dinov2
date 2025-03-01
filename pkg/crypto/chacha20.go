@@ -2,15 +2,19 @@ package crypto
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // Chacha20Encryptor implements the Encryptor interface using ChaCha20-Poly1305
 type Chacha20Encryptor struct {
-	key []byte
+	key         []byte
+	keyExchange *ECDHEKeyExchange
 }
 
 // NewChacha20Encryptor creates a new ChaCha20 encryptor with a random key
@@ -21,7 +25,16 @@ func NewChacha20Encryptor() (*Chacha20Encryptor, error) {
 		return nil, err
 	}
 	
-	return &Chacha20Encryptor{key: key}, nil
+	// Create ECDHE key exchange
+	keyExchange, err := NewECDHEKeyExchange()
+	if err != nil {
+		return nil, err
+	}
+	
+	return &Chacha20Encryptor{
+		key:         key,
+		keyExchange: keyExchange,
+	}, nil
 }
 
 // Encrypt implements the Encryptor interface
@@ -73,12 +86,32 @@ func (e *Chacha20Encryptor) Algorithm() Algorithm {
 
 // ExchangeKey implements the Encryptor interface
 func (e *Chacha20Encryptor) ExchangeKey(publicKey []byte) ([]byte, error) {
-	// TODO: Implement ECDHE key exchange
-	return nil, errors.New("ECDHE key exchange not yet implemented")
+	// Get our public key to send to the peer
+	ourPublicKey, err := e.keyExchange.GetPublicKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get public key: %w", err)
+	}
+	
+	// Derive shared secret using peer's public key
+	sharedSecret, err := e.keyExchange.DeriveSharedSecret(publicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive shared secret: %w", err)
+	}
+	
+	// Use the shared secret as our new key
+	e.key = sharedSecret
+	
+	// Return our public key so the peer can derive the same shared secret
+	return ourPublicKey, nil
 }
 
 // RotateKey implements the Encryptor interface
 func (e *Chacha20Encryptor) RotateKey() error {
+	// Regenerate the ECDHE key pair
+	if err := e.keyExchange.RegenerateKeyPair(); err != nil {
+		return fmt.Errorf("failed to regenerate key pair: %w", err)
+	}
+	
 	// Generate a new random key
 	newKey := make([]byte, chacha20poly1305.KeySize)
 	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
@@ -87,4 +120,18 @@ func (e *Chacha20Encryptor) RotateKey() error {
 	
 	e.key = newKey
 	return nil
+}
+
+// GetKeyFingerprint returns a fingerprint of the current key
+func (e *Chacha20Encryptor) GetKeyFingerprint() []byte {
+	// Create a simple fingerprint by hashing the key
+	hash := sha256.Sum256(e.key)
+	return hash[:8] // Return first 8 bytes as fingerprint
+}
+
+// GetLastRotation returns the time of the last key rotation
+func (e *Chacha20Encryptor) GetLastRotation() time.Time {
+	// This would normally track the last rotation time
+	// For now, just return the current time
+	return time.Now()
 }
