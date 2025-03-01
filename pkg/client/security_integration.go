@@ -1,6 +1,8 @@
 package client
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"dinoc2/pkg/security"
 	"fmt"
 	"time"

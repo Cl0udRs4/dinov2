@@ -5,13 +5,11 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"runtime"
 	"sync"
 	"time"
-	"unsafe"
 )
 
 // MemoryProtectionOptions configures memory protection behavior
