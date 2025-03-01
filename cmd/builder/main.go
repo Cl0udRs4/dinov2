@@ -309,6 +309,31 @@ func buildClient(config BuildConfig, verbose bool) error {
 		return fmt.Errorf("failed to create client directory: %w", err)
 	}
 
+	// Initialize a new Go module in the build directory
+	os.Chdir(config.BuildDir) // Change to build directory
+	
+	// Initialize a new Go module
+	initCmd := exec.Command("go", "mod", "init", "client")
+	if verbose {
+		initCmd.Stdout = os.Stdout
+		initCmd.Stderr = os.Stderr
+	}
+	err = initCmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to initialize Go module: %w", err)
+	}
+	
+	// Add required dependencies
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	if verbose {
+		tidyCmd.Stdout = os.Stdout
+		tidyCmd.Stderr = os.Stderr
+	}
+	err = tidyCmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to tidy Go module: %w", err)
+	}
+
 	// Generate config.go
 	err = generateConfigFile(config, clientDir)
 	if err != nil {
@@ -593,7 +618,7 @@ func generateModuleRegistrationFile(config BuildConfig, filePath string) error {
 	}
 
 	for _, moduleName := range config.Modules {
-		_, err = file.WriteString(fmt.Sprintf("\t_ \"dinoc2/pkg/module/%s\"\n", moduleName))
+		_, err = file.WriteString(fmt.Sprintf("\t_ \"client/pkg/module/%s\"\n", moduleName))
 		if err != nil {
 			return fmt.Errorf("failed to write to module registration file: %w", err)
 		}
@@ -624,7 +649,7 @@ func generateProtocolSwitchingCode(config BuildConfig, clientDir string) error {
 	}
 
 	// Write import statements
-	_, err = file.WriteString("import (\n\t\"fmt\"\n\t\"time\"\n\n\t\"dinoc2/pkg/protocol\"\n)\n\n")
+	_, err = file.WriteString("import (\n\t\"fmt\"\n\t\"time\"\n\n\t\"client/pkg/protocol\"\n)\n\n")
 	if err != nil {
 		return fmt.Errorf("failed to write to protocol switching file: %w", err)
 	}
