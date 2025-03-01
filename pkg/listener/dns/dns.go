@@ -1,13 +1,18 @@
 package dns
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/miekg/dns"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 )
 
 // DNSListener implements the Listener interface for DNS protocol
@@ -206,9 +211,25 @@ func (l *DNSListener) extractSubdomain(name string) string {
 
 // decodeSubdomain decodes the data encoded in the subdomain
 func (l *DNSListener) decodeSubdomain(subdomain string) string {
-	// In a real implementation, this would decode the data
-	// For now, just return the subdomain as-is
-	return subdomain
+	// Base64 decode the subdomain parts
+	parts := strings.Split(subdomain, ".")
+	var decodedData bytes.Buffer
+	
+	for _, part := range parts {
+		decoded, err := base64.StdEncoding.DecodeString(part)
+		if err != nil {
+			// If not valid base64, try URL-safe base64
+			decoded, err = base64.URLEncoding.DecodeString(part)
+			if err != nil {
+				// If still not valid, use as-is (might be a legitimate subdomain part)
+				decodedData.WriteString(part)
+				continue
+			}
+		}
+		decodedData.Write(decoded)
+	}
+	
+	return decodedData.String()
 }
 
 // createResponseRecord creates a DNS response record
@@ -229,8 +250,38 @@ func (l *DNSListener) createResponseRecord(q dns.Question, data string) dns.RR {
 
 // processData processes the data received in a DNS query
 func (l *DNSListener) processData(data string, addr net.Addr) {
-	// In a real implementation, this would pass the data to the protocol layer
-	fmt.Printf("Received data from %s: %s\n", addr, data)
+	// Create a protocol handler for processing the data
+	protocolHandler := protocol.NewProtocolHandler()
+	
+	// Generate a session ID based on the connection address
+	sessionID := crypto.SessionID(addr.String())
+	
+	// Create a session with AES encryption (default)
+	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
+	if err != nil {
+		fmt.Printf("Error creating session for DNS data: %v\n", err)
+		return
+	}
+	
+	// Decode the packet
+	packet, err := protocol.DecodePacket([]byte(data))
+	if err != nil {
+		fmt.Printf("Error decoding DNS packet data: %v\n", err)
+		return
+	}
+	
+	// Handle packet based on type
+	switch packet.Header.Type {
+	case protocol.PacketTypeKeyExchange:
+		fmt.Printf("Received key exchange from %s via DNS\n", addr)
+	case protocol.PacketTypeHeartbeat:
+		fmt.Printf("Received heartbeat from %s via DNS\n", addr)
+	default:
+		fmt.Printf("Received packet type %d from %s via DNS\n", packet.Header.Type, addr)
+	}
+	
+	// Clean up
+	protocolHandler.RemoveSession(sessionID)
 }
 
 // randomDelay returns a random delay within the configured range
