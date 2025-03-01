@@ -2,13 +2,16 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/module"
+	"dinoc2/pkg/module/loader"
 	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/protocol"
 )
@@ -596,7 +599,7 @@ func (c *Client) getOrLoadModule(name string) (module.Module, error) {
 	}
 
 	// Load the module using the native loader
-	mod, err := c.moduleManager.LoadModule(name, name, module.LoaderTypeNative)
+	mod, err := c.moduleManager.LoadModule(name, name, loader.LoaderTypeNative)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load module: %w", err)
 	}

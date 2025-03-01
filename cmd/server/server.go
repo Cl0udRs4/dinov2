@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
-
+	
 	"dinoc2/pkg/listener"
-	"dinoc2/pkg/module"
+	"dinoc2/pkg/module/loader"
 	"dinoc2/pkg/module/manager"
 )
 
@@ -145,18 +144,18 @@ func (s *Server) LoadModule(name, path string, loaderType string) error {
 	}
 
 	// Convert loader type string to LoaderType
-	var lt module.LoaderType
+	var lt loader.LoaderType
 	switch loaderType {
 	case "native":
-		lt = module.LoaderTypeNative
+		lt = loader.LoaderTypeNative
 	case "plugin":
-		lt = module.LoaderTypePlugin
+		lt = loader.LoaderTypePlugin
 	case "dll":
-		lt = module.LoaderTypeDLL
+		lt = loader.LoaderTypeDLL
 	case "wasm":
-		lt = module.LoaderTypeWasm
+		lt = loader.LoaderTypeWasm
 	case "rpc":
-		lt = module.LoaderTypeRPC
+		lt = loader.LoaderTypeRPC
 	default:
 		return fmt.Errorf("unsupported loader type: %s", loaderType)
 	}

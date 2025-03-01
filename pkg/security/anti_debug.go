@@ -7,7 +7,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-	"unsafe"
 )
 
 // AntiDebugOptions configures anti-debugging behavior

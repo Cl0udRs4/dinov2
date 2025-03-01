@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"dinoc2/pkg/security"
 	"fmt"
 	"time"
@@ -29,6 +30,9 @@ func DefaultSecurityOptions() SecurityOptions {
 		SecurityViolationCallback: nil,
 	}
 }
+
+// Server represents the C2 server (forward declaration)
+type Server struct{}
 
 // SecurityIntegration integrates security features with the server
 type SecurityIntegration struct {

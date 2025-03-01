@@ -8,6 +8,7 @@ const (
 	PacketTypeCommand
 	PacketTypeResponse
 	PacketTypeModuleData
+	PacketTypeModuleResponse
 	PacketTypeError
 	PacketTypeKeyExchange
 	PacketTypeProtocolSwitch

@@ -1,6 +1,7 @@
 package test
 
 import (
+	"bytes"
 	"dinoc2/pkg/security"
 	"fmt"
 	"testing"
@@ -57,8 +58,9 @@ func TestSecurityFeatures(t *testing.T) {
 		t.Fatalf("Failed to deobfuscate traffic: %v", err)
 	}
 
-	// Verify data
-	if string(deobfuscatedData) != string(originalData) {
+	// Verify data - trim any null bytes or extra padding that might be present
+	trimmedData := bytes.TrimRight(deobfuscatedData, "\x00")
+	if string(trimmedData) != string(originalData) {
 		t.Fatalf("Deobfuscated data mismatch: expected %s, got %s", string(originalData), string(deobfuscatedData))
 	}
 

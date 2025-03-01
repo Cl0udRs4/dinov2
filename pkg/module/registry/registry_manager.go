@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"dinoc2/pkg/module"
 	"fmt"
 	"sync"
 )

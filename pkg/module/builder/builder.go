@@ -1,7 +1,6 @@
 package builder
 
 import (
-	"dinoc2/pkg/module"
 	"dinoc2/pkg/module/registry"
 	"fmt"
 	"os"
