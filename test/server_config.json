@@ -1,0 +1,50 @@
+{
+  "listeners": [
+    {
+      "id": "tcp1",
+      "type": "tcp",
+      "address": "0.0.0.0",
+      "port": 8080,
+      "options": {}
+    },
+    {
+      "id": "http1",
+      "type": "http",
+      "address": "0.0.0.0",
+      "port": 8000,
+      "options": {
+        "use_http2": true,
+        "enable_api": true
+      }
+    },
+    {
+      "id": "dns1",
+      "type": "dns",
+      "address": "0.0.0.0",
+      "port": 5353,
+      "options": {
+        "domain": "c2.example.com",
+        "ttl": 60
+      }
+    },
+    {
+      "id": "ws1",
+      "type": "websocket",
+      "address": "0.0.0.0",
+      "port": 8001,
+      "options": {
+        "path": "/ws"
+      }
+    },
+    {
+      "id": "icmp1",
+      "type": "icmp",
+      "address": "0.0.0.0",
+      "port": 0,
+      "options": {
+        "protocol": "icmp"
+      },
+      "disabled": false
+    }
+  ]
+}

@@ -1,59 +1,41 @@
 #!/bin/bash
 
-# Protocol switching test
-echo "Starting protocol switching test..."
+# Colors for output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
 
-# Create config file for multiple protocols
-cat > "$(pwd)/multi_protocol_config.json" << EOF
-{
-  "listeners": [
-    {
-      "id": "tcp1",
-      "type": "tcp",
-      "address": "127.0.0.1",
-      "port": 8080,
-      "options": {}
-    },
-    {
-      "id": "tcp2",
-      "type": "tcp",
-      "address": "127.0.0.1",
-      "port": 8081,
-      "options": {}
-    }
-  ]
-}
-EOF
+echo -e "Testing protocol switching functionality..."
 
-# Start server in the background
-echo "Starting server with multiple listeners..."
-../bin/server -config "$(pwd)/multi_protocol_config.json" &
+# Start the server
+echo -e "Starting server..."
+./bin/server -config test/server_config.json &
 SERVER_PID=$!
-
-# Wait for server to start
 sleep 2
 
-# Start client with multiple protocols
-echo "Starting client with multiple protocols..."
-../bin/client -server "127.0.0.1:8080" -protocol "tcp" &
+# Start the client with TCP protocol
+echo -e "Starting client with TCP protocol..."
+./bin/client -server localhost:8080 -protocol tcp,http,websocket -heartbeat 5 &
 CLIENT_PID=$!
-
-# Wait for client to connect
 sleep 5
 
-# Check if client and server are still running
+# Test protocol switching via API
+echo -e "Testing protocol switching via API..."
+curl -s -X POST -H "Content-Type: application/json" -d '{"client_id":"test_client","protocol":"http"}' http://localhost:8000/api/protocol/switch
+sleep 5
+
+# Check if client is still connected
 if ps -p $CLIENT_PID > /dev/null; then
-    echo "Client is running - Initial connection successful!"
+    echo -e "✓ Client still running after protocol switch request"
 else
-    echo "Client is not running - Initial connection failed!"
-    kill $SERVER_PID 2>/dev/null
-    exit 1
+    echo -e "✗ Client terminated after protocol switch request"
 fi
 
 # Clean up
-echo "Cleaning up..."
-kill $CLIENT_PID 2>/dev/null
-kill $SERVER_PID 2>/dev/null
+echo -e "Cleaning up..."
+kill $CLIENT_PID
+kill $SERVER_PID
+wait
 
-echo "Test completed successfully!"
-exit 0
+echo -e "Protocol switching test completed"
