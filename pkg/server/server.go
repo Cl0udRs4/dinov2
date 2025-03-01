@@ -11,8 +11,11 @@ import (
 	"dinoc2/pkg/api"
 	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
+	"dinoc2/pkg/auth"
 	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
+	
+	"golang.org/x/crypto/bcrypt"
 )
 
 // APIConfig represents the API configuration
@@ -28,9 +31,11 @@ type APIConfig struct {
 	TokenExpiry int    `json:"token_expiry,omitempty"` // in minutes
 }
 
+
 // ServerConfig represents the server configuration
 type ServerConfig struct {
 	API       APIConfig `json:"api"`
+	UserAuth  auth.UserAuth  `json:"user_auth"`
 	Listeners []struct {
 		ID       string                 `json:"id"`
 		Type     string                 `json:"type"`
@@ -83,6 +88,37 @@ func (s *Server) LoadConfig(configFile string) error {
 
 	// Store the configuration
 	serverState.config = config
+
+	// Initialize user auth if it's empty
+	if serverState.config.UserAuth.Username == "" {
+		serverState.config.UserAuth = auth.UserAuth{
+			Username: "admin",
+			Password: "change_this_in_production",
+			Role:     "admin",
+		}
+	}
+	
+	auth.SetUserAuth(&serverState.config.UserAuth)
+	
+	// Hash the password if provided in plaintext
+	if serverState.config.UserAuth.Password != "" {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(serverState.config.UserAuth.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("failed to hash password: %w", err)
+		}
+		serverState.config.UserAuth.PasswordHash = string(hashedPassword)
+		serverState.config.UserAuth.Password = "" // Clear plaintext password
+		
+		// Save the updated configuration with hashed password
+		configBytes, err := json.MarshalIndent(serverState.config, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal config: %w", err)
+		}
+		
+		if err := os.WriteFile(configFile, configBytes, 0644); err != nil {
+			return fmt.Errorf("failed to write config file: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -200,7 +236,7 @@ func (s *Server) Shutdown() error {
 
 // CreateDefaultConfig creates a default configuration file
 func CreateDefaultConfig(outputPath string) error {
-	// Create a default configuration
+// Create a default configuration
 	config := &ServerConfig{
 		API: APIConfig{
 			Enabled:     true,
@@ -212,6 +248,11 @@ func CreateDefaultConfig(outputPath string) error {
 			AuthEnabled: true,
 			JWTSecret:   "change_this_to_a_secure_secret_in_production", // Default secret, should be changed in production
 			TokenExpiry: 60, // 1 hour
+		},
+		UserAuth: auth.UserAuth{
+			Username: "admin",
+			Password: "change_this_in_production", // Will be hashed during first load
+			Role:     "admin",
 		},
 		Listeners: []struct {
 			ID       string                 `json:"id"`

@@ -21,10 +21,12 @@ POST /api/auth/login
 Content-Type: application/json
 
 {
-  "username": "your_username",
+  "username": "admin",
   "password": "your_password"
 }
 ```
+
+The default username is `admin` and the default password is `change_this_in_production`. It is strongly recommended to change these defaults in the server configuration file.
 
 The response will include a JWT token:
 
@@ -227,9 +229,16 @@ The API can be configured in the server configuration file:
     "auth_enabled": true,
     "jwt_secret": "your_secret_key",
     "token_expiry": 60
+  },
+  "user_auth": {
+    "username": "admin",
+    "password": "change_this_in_production",
+    "role": "admin"
   }
 }
 ```
+
+### API Configuration
 
 - `enabled`: Whether the API is enabled
 - `address`: The address to bind the API server to
@@ -240,3 +249,20 @@ The API can be configured in the server configuration file:
 - `auth_enabled`: Whether authentication is enabled
 - `jwt_secret`: The secret key for JWT token generation
 - `token_expiry`: The token expiry time in minutes
+
+### User Authentication Configuration
+
+- `username`: The username for authentication
+- `password`: The plaintext password (only used for initial configuration)
+- `password_hash`: The hashed password (stored after first load)
+- `role`: The user's role (used for authorization)
+
+### Security Notes
+
+The DinoC2 authentication system follows these security best practices:
+
+1. Passwords are never stored in plaintext in memory
+2. Passwords are hashed using bcrypt, a secure password hashing algorithm
+3. The plaintext password in the configuration file is automatically hashed on first load and then removed
+4. Authentication failures do not reveal whether the username or password was incorrect
+5. JWT tokens are used for stateless authentication after login
