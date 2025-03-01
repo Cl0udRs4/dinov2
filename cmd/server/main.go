@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	
+	"dinoc2/pkg/server"
 )
 
 func main() {
@@ -30,7 +32,7 @@ func main() {
 		}
 
 		fmt.Printf("Creating default configuration file at: %s\n", outputPath)
-		if err := CreateDefaultConfig(outputPath); err != nil {
+		if err := server.CreateDefaultConfig(outputPath); err != nil {
 			log.Fatalf("Failed to create default configuration: %v", err)
 		}
 		fmt.Println("Default configuration created successfully.")
@@ -38,12 +40,12 @@ func main() {
 	}
 
 	// Create a new server
-	server := NewServer()
+	srv := server.NewServer()
 
 	// Load configuration from file if provided
 	if *configFile != "" {
 		fmt.Println("Loading configuration from:", *configFile)
-		if err := server.LoadConfig(*configFile); err != nil {
+		if err := srv.LoadConfig(*configFile); err != nil {
 			log.Fatalf("Failed to load configuration: %v", err)
 		}
 	} else {
@@ -56,7 +58,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start the server
-	if err := server.Start(); err != nil {
+	if err := srv.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 
@@ -67,7 +69,7 @@ func main() {
 	fmt.Println("\nShutting down server...")
 
 	// Perform clean shutdown
-	if err := server.Shutdown(); err != nil {
+	if err := srv.Shutdown(); err != nil {
 		log.Printf("Error during shutdown: %v", err)
 	}
 
