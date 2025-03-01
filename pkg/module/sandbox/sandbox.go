@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"dinoc2/pkg/module"
 	"fmt"
 	"os"
 	"os/exec"
