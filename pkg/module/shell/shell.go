@@ -6,7 +6,6 @@ import (
 	"io"
 	"os/exec"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -48,15 +47,12 @@ func (m *ShellModule) Init(params map[string]interface{}) error {
 
 	// Determine shell command based on OS
 	var shellPath string
-	var shellArgs []string
 
 	switch runtime.GOOS {
 	case "windows":
 		shellPath = "cmd.exe"
-		shellArgs = []string{"/c"}
 	default: // Linux, macOS, etc.
 		shellPath = "/bin/sh"
-		shellArgs = []string{"-c"}
 	}
 
 	// Create command

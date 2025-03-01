@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"dinoc2/pkg/listener"
+	"dinoc2/pkg/module"
+	"dinoc2/pkg/module/manager"
 )
 
 // ServerConfig holds the configuration for the C2 server
@@ -26,14 +29,23 @@ type ListenerConfig struct {
 
 // Server represents the C2 server
 type Server struct {
-	config         ServerConfig
+	config          ServerConfig
 	listenerManager *listener.Manager
+	moduleManager   *manager.ModuleManager
 }
 
 // NewServer creates a new C2 server
 func NewServer() *Server {
+	// Create module manager
+	moduleManager, err := manager.NewModuleManager()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize module manager: %v", err)
+		moduleManager = nil
+	}
+
 	return &Server{
 		listenerManager: listener.NewManager(),
+		moduleManager:   moduleManager,
 	}
 }
 
@@ -112,7 +124,86 @@ func (s *Server) Stop() error {
 
 // Shutdown performs a clean shutdown of the server
 func (s *Server) Shutdown() error {
+	// Shutdown module manager if available
+	if s.moduleManager != nil {
+		errors := s.moduleManager.ShutdownAllModules()
+		if len(errors) > 0 {
+			for _, err := range errors {
+				log.Printf("Error shutting down module: %v", err)
+			}
+		}
+	}
+
+	// Shutdown listener manager
 	return s.listenerManager.Shutdown()
+}
+
+// LoadModule loads a module using the specified loader
+func (s *Server) LoadModule(name, path string, loaderType string) error {
+	if s.moduleManager == nil {
+		return fmt.Errorf("module manager not initialized")
+	}
+
+	// Convert loader type string to LoaderType
+	var lt module.LoaderType
+	switch loaderType {
+	case "native":
+		lt = module.LoaderTypeNative
+	case "plugin":
+		lt = module.LoaderTypePlugin
+	case "dll":
+		lt = module.LoaderTypeDLL
+	case "wasm":
+		lt = module.LoaderTypeWasm
+	case "rpc":
+		lt = module.LoaderTypeRPC
+	default:
+		return fmt.Errorf("unsupported loader type: %s", loaderType)
+	}
+
+	// Load module
+	_, err := s.moduleManager.LoadModule(name, path, lt)
+	if err != nil {
+		return fmt.Errorf("failed to load module: %w", err)
+	}
+
+	return nil
+}
+
+// InitModule initializes a loaded module
+func (s *Server) InitModule(name string, params map[string]interface{}) error {
+	if s.moduleManager == nil {
+		return fmt.Errorf("module manager not initialized")
+	}
+
+	return s.moduleManager.InitModule(name, params)
+}
+
+// ExecModule executes a command on a module
+func (s *Server) ExecModule(name, command string, args ...interface{}) (interface{}, error) {
+	if s.moduleManager == nil {
+		return nil, fmt.Errorf("module manager not initialized")
+	}
+
+	return s.moduleManager.ExecModule(name, command, args...)
+}
+
+// UnloadModule unloads a module
+func (s *Server) UnloadModule(name string) error {
+	if s.moduleManager == nil {
+		return fmt.Errorf("module manager not initialized")
+	}
+
+	return s.moduleManager.UnloadModule(name)
+}
+
+// ListModules returns a list of loaded modules
+func (s *Server) ListModules() map[string]manager.ModuleInfo {
+	if s.moduleManager == nil {
+		return make(map[string]manager.ModuleInfo)
+	}
+
+	return s.moduleManager.ListModules()
 }
 
 // CreateDefaultConfig creates a default configuration file
