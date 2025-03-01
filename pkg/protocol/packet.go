@@ -68,57 +68,26 @@ func (p *Packet) SetTaskID(taskID uint32) {
 
 // CalculateChecksum calculates and sets the checksum for the packet
 func (p *Packet) CalculateChecksum() {
-	// TODO: Implement checksum calculation
-	p.Header.Checksum = 0
+	// Use the CalculateChecksum function from encoder.go
+	// Create a copy of the packet with zero checksum for calculation
+	packetCopy := *p
+	packetCopy.Header.Checksum = 0
+	
+	// Encode the packet without checksum
+	encodedPacket := packetCopy.Encode()
+	
+	// Calculate checksum
+	p.Header.Checksum = CalculateChecksum(encodedPacket)
 }
 
 // Encode serializes the packet into a byte slice
 func (p *Packet) Encode() []byte {
-	// TODO: Implement proper serialization
-	// This is a placeholder implementation
-	result := make([]byte, 0)
-	
-	// Add header
-	result = append(result, p.Header.Version)
-	result = append(result, byte(p.Header.EncAlgorithm))
-	result = append(result, byte(p.Header.Type))
-	
-	// Add task ID (4 bytes)
-	result = append(result, byte(p.Header.TaskID>>24))
-	result = append(result, byte(p.Header.TaskID>>16))
-	result = append(result, byte(p.Header.TaskID>>8))
-	result = append(result, byte(p.Header.TaskID))
-	
-	// Add checksum (4 bytes)
-	result = append(result, byte(p.Header.Checksum>>24))
-	result = append(result, byte(p.Header.Checksum>>16))
-	result = append(result, byte(p.Header.Checksum>>8))
-	result = append(result, byte(p.Header.Checksum))
-	
-	// Add data
-	result = append(result, p.Data...)
-	
-	return result
+	// Use the EncodePacket function from encoder.go
+	return EncodePacket(p)
 }
 
 // Decode deserializes a byte slice into a packet
 func Decode(data []byte) (*Packet, error) {
-	// TODO: Implement proper deserialization with error handling
-	// This is a placeholder implementation
-	if len(data) < 10 { // Minimum header size
-		return nil, nil
-	}
-	
-	p := &Packet{
-		Header: PacketHeader{
-			Version:      data[0],
-			EncAlgorithm: EncryptionAlgorithm(data[1]),
-			Type:         PacketType(data[2]),
-			TaskID:       uint32(data[3])<<24 | uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6]),
-			Checksum:     uint32(data[7])<<24 | uint32(data[8])<<16 | uint32(data[9])<<8 | uint32(data[10]),
-		},
-		Data: data[11:],
-	}
-	
-	return p, nil
+	// Use the DecodePacket function from encoder.go
+	return DecodePacket(data)
 }

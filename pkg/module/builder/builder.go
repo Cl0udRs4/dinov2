@@ -137,9 +137,39 @@ func (m *{{.ModuleName}}Module) Init(params map[string]interface{}) error {
 	}
 
 	// Initialize the module
-	// TODO: Add initialization code here
-
+	// Initialize resources based on parameters
+	if params != nil {
+		// Process initialization parameters
+		if name, ok := params["name"].(string); ok && name != "" {
+			m.name = name
+		}
+		
+		if desc, ok := params["description"].(string); ok && desc != "" {
+			m.description = desc
+		}
+		
+		// Initialize any additional resources needed by the module
+		if err := m.initializeResources(params); err != nil {
+			return fmt.Errorf("failed to initialize resources: %w", err)
+		}
+	}
+	
+	// Log initialization
+	fmt.Printf("Module %s initialized successfully\n", m.name)
+	
 	m.isRunning = true
+	return nil
+}
+
+// initializeResources initializes resources needed by the module
+func (m *{{.ModuleName}}Module) initializeResources(params map[string]interface{}) error {
+	// Initialize any resources needed by the module
+	// This could include:
+	// - Opening files
+	// - Establishing network connections
+	// - Allocating memory
+	// - Loading configuration
+	
 	return nil
 }
 
@@ -178,9 +208,27 @@ func (m *{{.ModuleName}}Module) Shutdown() error {
 	}
 
 	// Shutdown the module
-	// TODO: Add shutdown code here
-
+	// Release resources
+	if err := m.releaseResources(); err != nil {
+		return fmt.Errorf("failed to release resources: %w", err)
+	}
+	
+	// Log shutdown
+	fmt.Printf("Module %s shutdown successfully\n", m.name)
+	
 	m.isRunning = false
+	return nil
+}
+
+// releaseResources releases resources used by the module
+func (m *{{.ModuleName}}Module) releaseResources() error {
+	// Release any resources used by the module
+	// This could include:
+	// - Closing files
+	// - Closing network connections
+	// - Freeing memory
+	// - Saving state
+	
 	return nil
 }
 

