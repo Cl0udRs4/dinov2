@@ -134,17 +134,53 @@ func (l *TCPListener) acceptConnections() {
 func (l *TCPListener) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// TODO: Implement actual connection handling
-	// This will be integrated with the protocol layer
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 
-	// For now, just read and discard data
+	// Read length prefix
+	lengthBytes := make([]byte, 2)
+	_, err := conn.Read(lengthBytes)
+	if err != nil {
+		fmt.Printf("Error reading length prefix: %v\n", err)
+		return
+	}
+
+	// Parse length
+	length := uint16(lengthBytes[0])<<8 | uint16(lengthBytes[1])
+
+	// Read packet data
+	data := make([]byte, length)
+	_, err = conn.Read(data)
+	if err != nil {
+		fmt.Printf("Error reading packet data: %v\n", err)
+		return
+	}
+
+	// For now, just echo the packet back (simulating a handshake response)
+	// In a real implementation, we would process the packet and generate a response
+	
+	// Send length prefix
+	_, err = conn.Write(lengthBytes)
+	if err != nil {
+		fmt.Printf("Error sending length prefix: %v\n", err)
+		return
+	}
+
+	// Send packet data
+	_, err = conn.Write(data)
+	if err != nil {
+		fmt.Printf("Error sending packet data: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Sent handshake response to %s\n", conn.RemoteAddr())
+
+	// Continue reading data
 	buffer := make([]byte, 1024)
 	for {
 		_, err := conn.Read(buffer)
 		if err != nil {
 			break
 		}
-		// Process data will be implemented later
+		// In a real implementation, we would process the data
 	}
 }
