@@ -10,12 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ECDHEKeyExchange implements Elliptic Curve Diffie-Hellman Ephemeral key exchange
 type ECDHEKeyExchange struct {
-	privateKey *ecdsa.PrivateKey
-	curve      elliptic.Curve
+	privateKey       *ecdsa.PrivateKey
+	curve            elliptic.Curve
+	lastRotation     time.Time     // Timestamp of the last key rotation
+	rotationInterval time.Duration // Interval between key rotations
 }
 
 // NewECDHEKeyExchange creates a new ECDHE key exchange with P-256 curve
@@ -30,8 +33,10 @@ func NewECDHEKeyExchange() (*ECDHEKeyExchange, error) {
 	}
 	
 	return &ECDHEKeyExchange{
-		privateKey: privateKey,
-		curve:      curve,
+		privateKey:       privateKey,
+		curve:            curve,
+		lastRotation:     time.Now(),
+		rotationInterval: 24 * time.Hour, // Default to 24 hours
 	}, nil
 }
 
@@ -86,6 +91,16 @@ func (e *ECDHEKeyExchange) DeriveSharedSecret(peerPublicKeyPEM []byte) ([]byte, 
 	return hash[:], nil
 }
 
+// SetRotationInterval sets the interval between key rotations
+func (e *ECDHEKeyExchange) SetRotationInterval(interval time.Duration) {
+	e.rotationInterval = interval
+}
+
+// ShouldRotate checks if key rotation is needed based on the rotation interval
+func (e *ECDHEKeyExchange) ShouldRotate() bool {
+	return time.Since(e.lastRotation) >= e.rotationInterval
+}
+
 // RegenerateKeyPair regenerates the ECDHE key pair
 func (e *ECDHEKeyExchange) RegenerateKeyPair() error {
 	// Generate a new private key
@@ -95,6 +110,15 @@ func (e *ECDHEKeyExchange) RegenerateKeyPair() error {
 	}
 	
 	e.privateKey = privateKey
+	e.lastRotation = time.Now()
+	return nil
+}
+
+// RotateIfNeeded checks if key rotation is needed and performs it if necessary
+func (e *ECDHEKeyExchange) RotateIfNeeded() error {
+	if e.ShouldRotate() {
+		return e.RegenerateKeyPair()
+	}
 	return nil
 }
 

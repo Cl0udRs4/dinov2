@@ -3,6 +3,7 @@ package loader
 import (
 	"dinoc2/pkg/module"
 	"fmt"
+	"runtime"
 	"sync"
 )
 
@@ -47,17 +48,33 @@ func (f *LoaderFactory) GetLoader(loaderType LoaderType) (ModuleLoader, error) {
 func createLoader(loaderType LoaderType) (ModuleLoader, error) {
 	switch loaderType {
 	case LoaderTypeNative:
+		// Native loader works on all platforms
 		return NewNativeLoader(), nil
+		
 	case LoaderTypePlugin:
+		// Plugin loader only works on Linux
+		if runtime.GOOS != "linux" {
+			return nil, fmt.Errorf("plugin loader is only supported on Linux")
+		}
 		return NewPluginLoader(), nil
+		
 	case LoaderTypeDLL:
+		// DLL loader only works on Windows
+		if runtime.GOOS != "windows" {
+			return nil, fmt.Errorf("DLL loader is only supported on Windows")
+		}
 		return NewDLLLoader(), nil
+		
 	case LoaderTypeWasm:
+		// WebAssembly loader works on all platforms
 		return NewWasmLoader(), nil
+		
 	case LoaderTypeRPC:
+		// RPC loader works on all platforms
 		return NewRPCLoader(), nil
+		
 	default:
-		return nil, fmt.Errorf("unsupported loader type: %s", loaderType)
+		return nil, fmt.Errorf("unsupported loader type: %v", loaderType)
 	}
 }
 

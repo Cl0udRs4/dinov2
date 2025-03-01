@@ -6,22 +6,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	// "dinoc2/pkg/api" - removed to avoid import cycle
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
 )
 
 // HTTPListener implements the Listener interface for HTTP/HTTP2 protocol
 type HTTPListener struct {
-	config     HTTPConfig
-	server     *http.Server
-	status     string
-	statusLock sync.RWMutex
-	handlers   map[string]http.HandlerFunc
+	config      HTTPConfig
+	server      *http.Server
+	status      string
+	statusLock  sync.RWMutex
+	handlers    map[string]http.HandlerFunc
+	apiHandler  http.Handler // API handler for handling API requests
 }
 
 // HTTPConfig holds configuration for the HTTP listener
@@ -36,12 +39,19 @@ type HTTPConfig struct {
 }
 
 // NewHTTPListener creates a new HTTP listener
-func NewHTTPListener(config HTTPConfig) *HTTPListener {
+func NewHTTPListener(config HTTPConfig, apiHandler http.Handler) *HTTPListener {
 	return &HTTPListener{
-		config:   config,
-		status:   "stopped",
-		handlers: make(map[string]http.HandlerFunc),
+		config:     config,
+		status:     "stopped",
+		handlers:   make(map[string]http.HandlerFunc),
+		apiHandler: apiHandler,
 	}
+}
+
+// NewHTTPListenerWithoutAPI creates a new HTTP listener without an API handler
+// This is for backward compatibility
+func NewHTTPListenerWithoutAPI(config HTTPConfig) *HTTPListener {
+	return NewHTTPListener(config, nil)
 }
 
 // Start implements the Listener interface
@@ -175,6 +185,14 @@ func (l *HTTPListener) RegisterHandler(path string, handler http.HandlerFunc) {
 // defaultHandler is the default HTTP handler
 func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
+	
+	// Check if this is an API request
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		if l.apiHandler != nil {
+			l.apiHandler.ServeHTTP(w, r)
+			return
+		}
+	}
 	
 	// Set common headers to mimic a regular web server
 	w.Header().Set("Server", "Microsoft-IIS/10.0")

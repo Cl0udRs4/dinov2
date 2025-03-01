@@ -83,7 +83,7 @@ func CreateListener(listenerType ListenerType, config ListenerConfig) (Listener,
 			}
 		}
 		
-		httpListener := http.NewHTTPListener(httpConfig)
+		httpListener := http.NewHTTPListenerWithoutAPI(httpConfig)
 		return NewHTTPListenerAdapter(httpListener), nil
 	case ListenerTypeWebSocket:
 		// Convert generic config to WebSocket-specific config
