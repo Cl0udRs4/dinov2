@@ -131,7 +131,7 @@ func (m *SessionManager) RotateAllKeys() {
 	
 	now := time.Now()
 	
-	for id, session := range m.sessions {
+	for _, session := range m.sessions {
 		// Skip inactive sessions (no activity in the last hour)
 		if now.Sub(session.LastActivity) > time.Hour {
 			continue

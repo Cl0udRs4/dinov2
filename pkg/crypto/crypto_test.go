@@ -3,7 +3,6 @@ package crypto
 import (
 	"bytes"
 	"testing"
-	"time"
 )
 
 func TestAESEncryption(t *testing.T) {
