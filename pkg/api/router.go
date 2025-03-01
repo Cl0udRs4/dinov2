@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	
+	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
 	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
@@ -14,24 +16,37 @@ import (
 // Router handles HTTP API routing
 type Router struct {
 	listenerManager *listener.Manager
-	moduleManager   *manager.Manager
+	moduleManager   *manager.ModuleManager
 	taskManager     *task.Manager
 	routes          map[string]http.HandlerFunc
+	authMiddleware  *middleware.AuthMiddleware
 }
 
 // NewRouter creates a new API router
-func NewRouter(listenerManager *listener.Manager, moduleManager *manager.Manager, taskManager *task.Manager) *Router {
+func NewRouter(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager, authMiddleware *middleware.AuthMiddleware) *Router {
 	r := &Router{
 		listenerManager: listenerManager,
 		moduleManager:   moduleManager,
 		taskManager:     taskManager,
 		routes:          make(map[string]http.HandlerFunc),
+		authMiddleware:  authMiddleware,
 	}
 	
 	// Register routes
 	r.registerRoutes()
 	
+	// Register authentication routes if middleware is provided
+	if authMiddleware != nil {
+		r.RegisterAuthRoutes(authMiddleware)
+	}
+	
 	return r
+}
+
+// NewRouterWithoutAuth creates a new API router without authentication
+// This is for backward compatibility
+func NewRouterWithoutAuth(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager) *Router {
+	return NewRouter(listenerManager, moduleManager, taskManager, nil)
 }
 
 // registerRoutes registers all API routes
@@ -46,6 +61,9 @@ func (r *Router) registerRoutes() {
 	r.routes["/api/tasks"] = r.handleListTasks
 	r.routes["/api/tasks/create"] = r.handleCreateTask
 	r.routes["/api/tasks/status"] = r.handleTaskStatus
+	
+	// Documentation route
+	r.routes["/api/docs"] = r.handleDocs
 	
 	// Module routes
 	r.routes["/api/modules"] = r.handleListModules
@@ -65,6 +83,56 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Set common headers
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "Microsoft-IIS/10.0")
+	
+	// Skip authentication for login and refresh endpoints
+	if req.URL.Path == "/api/auth/login" || req.URL.Path == "/api/auth/refresh" {
+		// Find handler for the requested path
+		for path, handler := range r.routes {
+			if strings.HasPrefix(req.URL.Path, path) {
+				handler(w, req)
+				return
+			}
+		}
+		
+		// No handler found, return 404
+		http.NotFound(w, req)
+		return
+	}
+	
+	// Apply authentication middleware if available
+	if r.authMiddleware != nil {
+		// Skip authentication for login, refresh, and docs endpoints
+		if req.URL.Path == "/api/auth/login" || req.URL.Path == "/api/auth/refresh" || req.URL.Path == "/api/docs" {
+			// Allow these endpoints without authentication
+		} else {
+			// Get the Authorization header
+			authHeader := req.Header.Get("Authorization")
+			if authHeader == "" {
+				writeError(w, "Authorization header required", http.StatusUnauthorized)
+				return
+			}
+			
+			// Check if the Authorization header has the correct format
+			if !strings.HasPrefix(authHeader, "Bearer ") {
+				writeError(w, "Invalid authorization format", http.StatusUnauthorized)
+				return
+			}
+			
+			// Extract the token
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			
+			// Validate the token
+			_, claims, err := r.authMiddleware.ValidateToken(tokenString)
+			if err != nil {
+				writeError(w, fmt.Sprintf("Invalid token: %v", err), http.StatusUnauthorized)
+				return
+			}
+			
+			// Add claims to the request context
+			ctx := context.WithValue(req.Context(), "claims", claims)
+			req = req.WithContext(ctx)
+		}
+	}
 	
 	// Find handler for the requested path
 	for path, handler := range r.routes {

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	
 	"dinoc2/pkg/listener"
 )
@@ -43,15 +42,15 @@ func (r *Router) handleCreateListener(w http.ResponseWriter, req *http.Request) 
 	
 	// Create listener config
 	config := listener.ListenerConfig{
-		ID:      listenerReq.ID,
-		Type:    listenerReq.Type,
-		Address: listenerReq.Address,
-		Port:    listenerReq.Port,
-		Options: listenerReq.Options,
+		Protocol: listenerReq.Address,
+		Address:  listenerReq.Address,
+		Port:     listenerReq.Port,
+		Options:  listenerReq.Options,
 	}
 	
 	// Create and start listener
-	err := r.listenerManager.CreateListener(config)
+	listenerType := listener.ListenerType(listenerReq.Type)
+	err := r.listenerManager.CreateListener(listenerReq.ID, listenerType, config)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -99,7 +98,7 @@ func (r *Router) handleListenerStatus(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	
-	status, err := r.listenerManager.GetListenerStatus(id)
+	status, err := r.listenerManager.GetStatus(id)
 	if err != nil {
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return

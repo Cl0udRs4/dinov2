@@ -4,15 +4,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 
+	"dinoc2/pkg/api"
+	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
+	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
 )
 
+// APIConfig represents the API configuration
+type APIConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Address     string `json:"address"`
+	Port        int    `json:"port"`
+	TLSEnabled  bool   `json:"tls_enabled"`
+	TLSCertFile string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile  string `json:"tls_key_file,omitempty"`
+	AuthEnabled bool   `json:"auth_enabled"`
+	JWTSecret   string `json:"jwt_secret,omitempty"`
+	TokenExpiry int    `json:"token_expiry,omitempty"` // in minutes
+}
+
 // ServerConfig represents the server configuration
 type ServerConfig struct {
+	API       APIConfig `json:"api"`
 	Listeners []struct {
 		ID       string                 `json:"id"`
 		Type     string                 `json:"type"`
@@ -76,6 +94,51 @@ func (s *Server) Start() error {
 		return fmt.Errorf("server not initialized, call LoadConfig first")
 	}
 	
+	// Initialize module manager
+	moduleManager, err := manager.NewModuleManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize module manager: %v", err)
+	}
+	
+	// Initialize API if enabled
+	var apiRouter *api.Router
+	var authMiddleware *middleware.AuthMiddleware
+	
+	if serverState.config.API.Enabled {
+		// Create authentication middleware if auth is enabled
+		if serverState.config.API.AuthEnabled {
+			authConfig := middleware.AuthConfig{
+				Enabled:     serverState.config.API.AuthEnabled,
+				JWTSecret:   serverState.config.API.JWTSecret,
+				TokenExpiry: serverState.config.API.TokenExpiry,
+			}
+			authMiddleware = middleware.NewAuthMiddleware(authConfig)
+		}
+		
+		// Create API router
+		apiRouter = api.NewRouter(serverState.listenerManager, moduleManager, serverState.taskManager, authMiddleware)
+		
+		// Start dedicated API server if configured
+		if serverState.config.API.Port > 0 {
+			go func() {
+				addr := fmt.Sprintf("%s:%d", serverState.config.API.Address, serverState.config.API.Port)
+				var err error
+				
+				log.Printf("Starting API server on %s", addr)
+				
+				if serverState.config.API.TLSEnabled && serverState.config.API.TLSCertFile != "" && serverState.config.API.TLSKeyFile != "" {
+					err = http.ListenAndServeTLS(addr, serverState.config.API.TLSCertFile, serverState.config.API.TLSKeyFile, apiRouter)
+				} else {
+					err = http.ListenAndServe(addr, apiRouter)
+				}
+				
+				if err != nil && err != http.ErrServerClosed {
+					log.Printf("API server error: %v", err)
+				}
+			}()
+		}
+	}
+	
 	// Start all listeners
 	for _, listenerConfig := range serverState.config.Listeners {
 		// Skip disabled listeners
@@ -90,6 +153,14 @@ func (s *Server) Start() error {
 			Address:  listenerConfig.Address,
 			Port:     listenerConfig.Port,
 			Options:  listenerConfig.Options,
+		}
+		
+		// Pass API router to HTTP and WebSocket listeners if API is enabled
+		if serverState.config.API.Enabled && (listenerConfig.Type == string(listener.ListenerTypeHTTP) || listenerConfig.Type == string(listener.ListenerTypeWebSocket)) {
+			if config.Options == nil {
+				config.Options = make(map[string]interface{})
+			}
+			config.Options["api_handler"] = apiRouter
 		}
 
 		// Create the listener
@@ -131,6 +202,17 @@ func (s *Server) Shutdown() error {
 func CreateDefaultConfig(outputPath string) error {
 	// Create a default configuration
 	config := &ServerConfig{
+		API: APIConfig{
+			Enabled:     true,
+			Address:     "127.0.0.1",
+			Port:        8443,
+			TLSEnabled:  false,
+			TLSCertFile: "",
+			TLSKeyFile:  "",
+			AuthEnabled: true,
+			JWTSecret:   "change_this_to_a_secure_secret_in_production", // Default secret, should be changed in production
+			TokenExpiry: 60, // 1 hour
+		},
 		Listeners: []struct {
 			ID       string                 `json:"id"`
 			Type     string                 `json:"type"`
