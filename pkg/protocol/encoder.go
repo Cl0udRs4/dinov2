@@ -247,17 +247,23 @@ func ReassemblePacket(fragments []*Packet) (*Packet, error) {
 	}
 	
 	// Sort fragments by index
-	sortedFragments := make([]*Packet, len(fragments))
+	// First determine the maximum index to properly size our array
+	maxIndex := 0
 	for _, fragment := range fragments {
 		if len(fragment.Data) < 2 {
 			return nil, errors.New("invalid fragment: too short")
 		}
 		
 		index := int(fragment.Data[0])
-		if index >= len(fragments) {
-			return nil, errors.New("invalid fragment index")
+		if index > maxIndex {
+			maxIndex = index
 		}
-		
+	}
+	
+	// Create sorted array with proper size
+	sortedFragments := make([]*Packet, maxIndex+1)
+	for _, fragment := range fragments {
+		index := int(fragment.Data[0])
 		sortedFragments[index] = fragment
 	}
 	
