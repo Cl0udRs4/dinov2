@@ -6,6 +6,38 @@
       "address": "127.0.0.1",
       "port": 8080,
       "options": {}
+    },
+    {
+      "id": "dns1",
+      "type": "dns",
+      "address": "127.0.0.1",
+      "port": 53,
+      "options": {
+        "domain": "c2.example.com",
+        "ttl": 300
+      }
+    },
+    {
+      "id": "icmp1",
+      "type": "icmp",
+      "address": "127.0.0.1",
+      "options": {}
+    },
+    {
+      "id": "http1",
+      "type": "http",
+      "address": "127.0.0.1",
+      "port": 8443,
+      "options": {
+        "useHTTP2": true
+      }
+    },
+    {
+      "id": "ws1",
+      "type": "websocket",
+      "address": "127.0.0.1",
+      "port": 8444,
+      "options": {}
     }
   ]
 }

@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 )
 
 // WebSocketListener implements the Listener interface for WebSocket protocol
@@ -198,11 +200,57 @@ func (l *WebSocketListener) handleConnection(conn *websocket.Conn) {
 
 // processMessage processes a WebSocket message
 func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int, message []byte) {
-	// In a real implementation, this would pass the message to the protocol layer
-	fmt.Printf("Received WebSocket message from %s: %s\n", conn.RemoteAddr(), string(message))
+	fmt.Printf("Received WebSocket message from %s\n", conn.RemoteAddr())
 	
-	// Echo the message back for now
-	err := conn.WriteMessage(messageType, message)
+	// Create a protocol handler for processing the data
+	protocolHandler := protocol.NewProtocolHandler()
+	
+	// Generate a session ID based on the connection address
+	sessionID := crypto.SessionID(conn.RemoteAddr().String())
+	
+	// Create a session with AES encryption (default)
+	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
+	if err != nil {
+		fmt.Printf("Error creating session for WebSocket data: %v\n", err)
+		return
+	}
+	
+	// Decode the packet
+	packet, err := protocol.DecodePacket(message)
+	if err != nil {
+		fmt.Printf("Error decoding WebSocket packet data: %v\n", err)
+		// Echo the message back for invalid packets
+		conn.WriteMessage(messageType, message)
+		return
+	}
+	
+	// Handle packet based on type
+	var responseData []byte
+	
+	switch packet.Header.Type {
+	case protocol.PacketTypeKeyExchange:
+		fmt.Printf("Received key exchange from %s via WebSocket\n", conn.RemoteAddr())
+		// Create a response packet with the same session ID
+		responsePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+		responseData = protocol.EncodePacket(responsePacket)
+		
+	case protocol.PacketTypeHeartbeat:
+		fmt.Printf("Received heartbeat from %s via WebSocket\n", conn.RemoteAddr())
+		// Create a heartbeat response
+		responsePacket := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
+		responseData = protocol.EncodePacket(responsePacket)
+		
+	default:
+		fmt.Printf("Received packet type %d from %s via WebSocket\n", packet.Header.Type, conn.RemoteAddr())
+		// Echo back the packet for other types
+		responseData = protocol.EncodePacket(packet)
+	}
+	
+	// Clean up
+	protocolHandler.RemoveSession(sessionID)
+	
+	// Send the response
+	err = conn.WriteMessage(messageType, responseData)
 	if err != nil {
 		fmt.Printf("Error writing WebSocket message: %v\n", err)
 	}

