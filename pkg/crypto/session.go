@@ -185,6 +185,7 @@ func (m *SessionManager) Shutdown() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	
+	// Clear all sessions
 	m.sessions = make(map[SessionID]*Session)
 }
 
