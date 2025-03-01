@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"dinoc2/pkg/auth"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -209,15 +210,21 @@ func (am *AuthMiddleware) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement actual authentication logic
-	// For now, just check if the username and password are not empty
+	// Check if username and password are provided
 	if loginRequest.Username == "" || loginRequest.Password == "" {
 		http.Error(w, "Username and password are required", http.StatusBadRequest)
 		return
 	}
 
+	// Validate credentials
+	role, valid := auth.ValidateUserCredentials(loginRequest.Username, loginRequest.Password)
+	if !valid {
+		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
 	// Generate a token
-	token, err := am.GenerateToken(loginRequest.Username, "admin")
+	token, err := am.GenerateToken(loginRequest.Username, role)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
