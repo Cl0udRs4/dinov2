@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 )
 
 // TCPListener implements the Listener interface for TCP protocol
@@ -136,51 +139,92 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 
-	// Read length prefix
-	lengthBytes := make([]byte, 2)
-	_, err := conn.Read(lengthBytes)
-	if err != nil {
-		fmt.Printf("Error reading length prefix: %v\n", err)
-		return
-	}
-
-	// Parse length
-	length := uint16(lengthBytes[0])<<8 | uint16(lengthBytes[1])
-
-	// Read packet data
-	data := make([]byte, length)
-	_, err = conn.Read(data)
-	if err != nil {
-		fmt.Printf("Error reading packet data: %v\n", err)
-		return
-	}
-
-	// For now, just echo the packet back (simulating a handshake response)
-	// In a real implementation, we would process the packet and generate a response
+	// Create a simple protocol handler for this connection
+	protocolHandler := protocol.NewProtocolHandler()
 	
-	// Send length prefix
-	_, err = conn.Write(lengthBytes)
+	// Generate a session ID based on the connection address
+	sessionID := crypto.SessionID(conn.RemoteAddr().String())
+	
+	// Create a session with AES encryption
+	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
 	if err != nil {
-		fmt.Printf("Error sending length prefix: %v\n", err)
+		fmt.Printf("Error creating session: %v\n", err)
 		return
 	}
 
-	// Send packet data
-	_, err = conn.Write(data)
-	if err != nil {
-		fmt.Printf("Error sending packet data: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Sent handshake response to %s\n", conn.RemoteAddr())
-
-	// Continue reading data
-	buffer := make([]byte, 1024)
+	// Handle communication loop
 	for {
-		_, err := conn.Read(buffer)
+		// Read length prefix
+		lengthBytes := make([]byte, 2)
+		_, err := conn.Read(lengthBytes)
 		if err != nil {
+			fmt.Printf("Connection closed: %v\n", err)
 			break
 		}
-		// In a real implementation, we would process the data
+
+		// Parse length
+		length := uint16(lengthBytes[0])<<8 | uint16(lengthBytes[1])
+
+		// Read packet data
+		data := make([]byte, length)
+		_, err = conn.Read(data)
+		if err != nil {
+			fmt.Printf("Error reading packet data: %v\n", err)
+			break
+		}
+
+		// Decode the packet
+		packet, err := protocol.DecodePacket(data)
+		if err != nil {
+			fmt.Printf("Error decoding packet: %v\n", err)
+			continue
+		}
+
+		// Handle packet based on type
+		var responsePacket *protocol.Packet
+		
+		switch packet.Header.Type {
+		case protocol.PacketTypeKeyExchange:
+			// Handle key exchange (handshake)
+			fmt.Printf("Received key exchange from %s\n", conn.RemoteAddr())
+			
+			// Create a response packet with the same session ID
+			responsePacket = protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+			
+		case protocol.PacketTypeHeartbeat:
+			// Handle heartbeat
+			fmt.Printf("Received heartbeat from %s\n", conn.RemoteAddr())
+			
+			// Create a heartbeat response
+			responsePacket = protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
+			
+		default:
+			// For now, just echo back the packet for other types
+			fmt.Printf("Received packet type %d from %s\n", packet.Header.Type, conn.RemoteAddr())
+			responsePacket = packet
+		}
+
+		// Encode the response packet
+		responseData := protocol.EncodePacket(responsePacket)
+		
+		// Send length prefix
+		responseLengthBytes := []byte{byte(len(responseData) >> 8), byte(len(responseData))}
+		_, err = conn.Write(responseLengthBytes)
+		if err != nil {
+			fmt.Printf("Error sending length prefix: %v\n", err)
+			break
+		}
+
+		// Send response data
+		_, err = conn.Write(responseData)
+		if err != nil {
+			fmt.Printf("Error sending response: %v\n", err)
+			break
+		}
+
+		fmt.Printf("Sent response to %s\n", conn.RemoteAddr())
 	}
+	
+	// Clean up
+	protocolHandler.RemoveSession(sessionID)
 }
