@@ -138,6 +138,13 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
+	
+	// Register client with the client manager
+	clientID := conn.RemoteAddr().String()
+	if clientManager := GetClientManager(); clientManager != nil {
+		clientManager.RegisterClient(clientID, conn.RemoteAddr().String(), "tcp")
+		defer clientManager.UnregisterClient(clientID)
+	}
 
 	// Create a simple protocol handler for this connection
 	protocolHandler := protocol.NewProtocolHandler()

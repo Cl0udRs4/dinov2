@@ -11,9 +11,8 @@ func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	
-	// This would typically come from a client manager
-	// For now, we'll just return an empty list
-	clients := []interface{}{}
+	// Get clients from the client manager
+	clients := r.clientManager.ListClients()
 	
 	writeJSON(w, clients, http.StatusOK)
 }

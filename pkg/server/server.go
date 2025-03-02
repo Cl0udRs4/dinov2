@@ -12,6 +12,7 @@ import (
 	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
 	"dinoc2/pkg/auth"
+	"dinoc2/pkg/client/manager"
 	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
 	
@@ -50,6 +51,7 @@ type ServerConfig struct {
 type serverImpl struct {
 	listenerManager *listener.Manager
 	taskManager     *task.Manager
+	clientManager   *client.Manager
 	mutex           sync.RWMutex
 	config          *ServerConfig
 }
@@ -64,6 +66,7 @@ func NewServer() *Server {
 		serverState = &serverImpl{
 			listenerManager: listener.NewManager(),
 			taskManager:     task.NewManager(),
+			clientManager:   manager.NewClientManager(),
 			config:          &ServerConfig{},
 		}
 	}
@@ -152,7 +155,7 @@ func (s *Server) Start() error {
 		}
 		
 		// Create API router
-		apiRouter = api.NewRouter(serverState.listenerManager, moduleManager, serverState.taskManager, authMiddleware)
+		apiRouter = api.NewRouter(serverState.listenerManager, moduleManager, serverState.taskManager, serverState.clientManager, authMiddleware)
 		
 		// Start dedicated API server if configured
 		if serverState.config.API.Port > 0 {
@@ -174,6 +177,9 @@ func (s *Server) Start() error {
 			}()
 		}
 	}
+	
+	// Set the client manager in the listener package
+	listener.SetClientManager(serverState.clientManager)
 	
 	// Start all listeners
 	for _, listenerConfig := range serverState.config.Listeners {
@@ -339,4 +345,12 @@ func (s *Server) GetTaskManager() *task.Manager {
 		return nil
 	}
 	return serverState.taskManager
+}
+
+// GetClientManager returns the client manager
+func (s *Server) GetClientManager() *manager.ClientManager {
+	if serverState == nil {
+		return nil
+	}
+	return serverState.clientManager
 }
