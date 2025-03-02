@@ -8,24 +8,24 @@ import (
 	"strings"
 	
 	"dinoc2/pkg/api/middleware"
-	"dinoc2/pkg/client/manager"
+	clientmanager "dinoc2/pkg/client/manager"
 	"dinoc2/pkg/listener"
-	"dinoc2/pkg/module/manager"
+	modulemanager "dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
 )
 
 // Router handles HTTP API routing
 type Router struct {
 	listenerManager *listener.Manager
-	moduleManager   *manager.ModuleManager
+	moduleManager   *modulemanager.ModuleManager
 	taskManager     *task.Manager
-	clientManager   *manager.ClientManager
+	clientManager   *clientmanager.ClientManager
 	routes          map[string]http.HandlerFunc
 	authMiddleware  *middleware.AuthMiddleware
 }
 
 // NewRouter creates a new API router
-func NewRouter(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager, clientManager *manager.ClientManager, authMiddleware *middleware.AuthMiddleware) *Router {
+func NewRouter(listenerManager *listener.Manager, moduleManager *modulemanager.ModuleManager, taskManager *task.Manager, clientManager *clientmanager.ClientManager, authMiddleware *middleware.AuthMiddleware) *Router {
 	r := &Router{
 		listenerManager: listenerManager,
 		moduleManager:   moduleManager,
@@ -48,7 +48,7 @@ func NewRouter(listenerManager *listener.Manager, moduleManager *manager.ModuleM
 
 // NewRouterWithoutAuth creates a new API router without authentication
 // This is for backward compatibility
-func NewRouterWithoutAuth(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager, clientManager *manager.ClientManager) *Router {
+func NewRouterWithoutAuth(listenerManager *listener.Manager, moduleManager *modulemanager.ModuleManager, taskManager *task.Manager, clientManager *clientmanager.ClientManager) *Router {
 	return NewRouter(listenerManager, moduleManager, taskManager, clientManager, nil)
 }
 
