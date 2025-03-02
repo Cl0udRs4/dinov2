@@ -8,42 +8,27 @@ import (
 	"time"
 )
 
-// Algorithm represents supported encryption algorithms
+// Algorithm represents an encryption algorithm
 type Algorithm string
 
+// Encryption algorithms
 const (
 	AlgorithmAES      Algorithm = "aes"
 	AlgorithmChacha20 Algorithm = "chacha20"
 )
 
-// SessionID is already defined in session.go
+// SessionID represents a unique session identifier
+type SessionID string
 
 // Encryptor interface defines methods that all encryption implementations must support
 type Encryptor interface {
-	// Encrypt encrypts plaintext data
-	Encrypt(plain []byte) ([]byte, error)
-	
-	// Decrypt decrypts ciphertext data
-	Decrypt(cipher []byte) ([]byte, error)
-	
-	// Algorithm returns the encryption algorithm identifier
+	Encrypt(data []byte) ([]byte, error)
+	Decrypt(data []byte) ([]byte, error)
 	Algorithm() Algorithm
-	
-	// ExchangeKey performs key exchange using the provided public key
-	ExchangeKey(publicKey []byte) ([]byte, error)
-	
-	// RotateKey rotates the encryption key
-	RotateKey() error
-	
-	// GetKeyFingerprint returns a fingerprint of the current key
-	GetKeyFingerprint() []byte
-	
-	// GetLastRotation returns the time of the last key rotation
-	GetLastRotation() time.Time
 }
 
-// Factory creates encryptors based on algorithm type
-func Factory(algorithm Algorithm) (Encryptor, error) {
+// NewEncryptor creates a new encryptor based on the specified algorithm
+func NewEncryptor(algorithm Algorithm) (Encryptor, error) {
 	switch algorithm {
 	case AlgorithmAES:
 		return NewAESEncryptor()
