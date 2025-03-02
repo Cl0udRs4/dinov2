@@ -1,65 +1,92 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
-
-	"github.com/gin-gonic/gin"
 )
 
-// ClientHandler handles client-related API endpoints
-type ClientHandler struct {
-	clientManager interface {
-		ListClients() []map[string]interface{}
-		GetClient(string) (interface{}, error)
-		UnregisterClient(string) error
-	}
+// RegisterClientRoutes registers client-related routes
+func (r *Router) RegisterClientRoutes() {
+	// Register client routes
+	r.routes["/api/clients"] = r.handleListClients
+	r.routes["/api/clients/tasks"] = r.handleClientTasks
 }
 
-// NewClientHandler creates a new client handler
-func NewClientHandler(clientManager interface{}) *ClientHandler {
-	return &ClientHandler{
-		clientManager: clientManager,
+// handleListClients handles the request to list all clients
+func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
+	// Only allow GET requests
+	if req.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-}
 
-// GetClients returns a list of all clients
-func (h *ClientHandler) GetClients(c *gin.Context) {
-	clients := h.clientManager.ListClients()
-	c.JSON(http.StatusOK, gin.H{
-		"clients": clients,
+	// Check if client manager is available
+	if r.clientManager == nil {
+		http.Error(w, "Client manager not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get clients from client manager
+	clients := r.clientManager.ListClients()
+
+	// Convert clients to JSON-friendly format
+	clientsJSON := make([]map[string]interface{}, 0, len(clients))
+	for _, client := range clients {
+		clientJSON := map[string]interface{}{
+			"id":       string(client.SessionID),
+			"address":  client.Address,
+			"protocol": client.Protocol,
+			"last_seen": client.LastSeen,
+		}
+		
+		// Add additional info if available
+		if client.Info != nil {
+			for k, v := range client.Info {
+				clientJSON[k] = v
+			}
+		}
+		
+		clientsJSON = append(clientsJSON, clientJSON)
+	}
+
+	// Return clients as JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"clients": clientsJSON,
 	})
 }
 
-// GetClient returns a specific client
-func (h *ClientHandler) GetClient(c *gin.Context) {
-	clientID := c.Param("id")
-	
-	client, err := h.clientManager.GetClient(clientID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Client not found",
-		})
+// handleClientTasks handles the request to get tasks for a client
+func (r *Router) handleClientTasks(w http.ResponseWriter, req *http.Request) {
+	// Only allow GET requests
+	if req.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
-	c.JSON(http.StatusOK, gin.H{
-		"client": client,
-	})
-}
 
-// DeleteClient removes a client
-func (h *ClientHandler) DeleteClient(c *gin.Context) {
-	clientID := c.Param("id")
-	
-	err := h.clientManager.UnregisterClient(clientID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Client not found",
-		})
+	// Get client ID from query parameters
+	clientID := req.URL.Query().Get("id")
+	if clientID == "" {
+		http.Error(w, "Client ID is required", http.StatusBadRequest)
 		return
 	}
-	
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Client deleted",
+
+	// Check if task manager is available
+	if r.taskManager == nil {
+		http.Error(w, "Task manager not available", http.StatusInternalServerError)
+		return
+	}
+
+	// Get tasks for client
+	tasks, err := r.taskManager.GetTasksForClient(clientID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return tasks as JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tasks": tasks,
 	})
 }

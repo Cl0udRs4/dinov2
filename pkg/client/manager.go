@@ -4,12 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 )
 
 // Manager handles client connections and management
 type Manager struct {
-	clients     map[string]interface{}
+	clients     map[string]*Client
 	clientMutex sync.RWMutex
 }
 
@@ -17,38 +16,21 @@ type Manager struct {
 func NewManager() *Manager {
 	fmt.Println("DEBUG: Creating new client manager")
 	return &Manager{
-		clients: make(map[string]interface{}),
+		clients: make(map[string]*Client),
 	}
 }
 
 // RegisterClient registers a client with the manager
-func (m *Manager) RegisterClient(client interface{}) string {
+func (m *Manager) RegisterClient(client *Client) string {
 	m.clientMutex.Lock()
 	defer m.clientMutex.Unlock()
 	
-	fmt.Printf("DEBUG: RegisterClient called with client type: %T\n", client)
+	fmt.Printf("DEBUG: RegisterClient called with client: %+v\n", client)
 	
-	var clientID string
-	
-	// Try to get client ID based on type
-	switch c := client.(type) {
-	case *Client:
-		clientID = string(c.sessionID)
-		fmt.Printf("DEBUG: Client has sessionID: %s\n", clientID)
-	case struct {
-		Address string
-		ID      string
-	}:
-		clientID = c.ID
-		fmt.Printf("DEBUG: Simple client has ID: %s\n", clientID)
-	default:
-		// For unknown client objects, generate a unique ID
-		clientID = fmt.Sprintf("client-%d", time.Now().UnixNano())
-		fmt.Printf("DEBUG: Generated new clientID: %s\n", clientID)
-	}
-	
+	clientID := string(client.SessionID)
 	m.clients[clientID] = client
-	fmt.Printf("DEBUG: Client registered, total clients: %d\n", len(m.clients))
+	
+	fmt.Printf("DEBUG: Client registered with ID %s, total clients: %d\n", clientID, len(m.clients))
 	
 	return clientID
 }
@@ -67,7 +49,7 @@ func (m *Manager) UnregisterClient(clientID string) error {
 }
 
 // GetClient retrieves a client by ID
-func (m *Manager) GetClient(clientID string) (interface{}, error) {
+func (m *Manager) GetClient(clientID string) (*Client, error) {
 	m.clientMutex.RLock()
 	defer m.clientMutex.RUnlock()
 	
@@ -80,38 +62,18 @@ func (m *Manager) GetClient(clientID string) (interface{}, error) {
 }
 
 // ListClients returns a list of all connected clients
-func (m *Manager) ListClients() []map[string]interface{} {
+func (m *Manager) ListClients() []*Client {
 	m.clientMutex.RLock()
 	defer m.clientMutex.RUnlock()
 	
 	fmt.Printf("DEBUG: ListClients called, number of clients: %d\n", len(m.clients))
-	for id := range m.clients {
-		fmt.Printf("DEBUG: Client ID: %s\n", id)
+	for id, client := range m.clients {
+		fmt.Printf("DEBUG: Client ID: %s, Address: %s, Protocol: %s\n", id, client.Address, client.Protocol)
 	}
 	
-	clients := make([]map[string]interface{}, 0, len(m.clients))
-	for id, client := range m.clients {
-		clientInfo := map[string]interface{}{
-			"id": id,
-		}
-		
-		// Add additional info based on client type
-		switch c := client.(type) {
-		case *Client:
-			clientInfo["type"] = "full_client"
-			clientInfo["address"] = c.config.ServerAddress
-			clientInfo["protocol"] = c.currentProtocol
-		case struct {
-			Address string
-			ID      string
-		}:
-			clientInfo["type"] = "simple_client"
-			clientInfo["address"] = c.Address
-		default:
-			clientInfo["type"] = "unknown_client"
-		}
-		
-		clients = append(clients, clientInfo)
+	clients := make([]*Client, 0, len(m.clients))
+	for _, client := range m.clients {
+		clients = append(clients, client)
 	}
 	
 	return clients

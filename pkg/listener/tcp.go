@@ -1,6 +1,9 @@
 package listener
 
 import (
+	"dinoc2/pkg/client"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 	"fmt"
 	"net"
 	"time"
@@ -110,25 +113,37 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 
+	// Create a simple protocol handler for this connection
+	protocolHandler := protocol.NewProtocolHandler()
+	
+	// Generate a unique session ID
+	sessionID := crypto.GenerateSessionID()
+	
+	// Create a session with AES encryption (default, will be updated based on client handshake)
+	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
+	if err != nil {
+		fmt.Printf("Failed to create session: %v\n", err)
+		return
+	}
+	
+	// Create a new client object
+	newClient := &client.Client{
+		SessionID: sessionID,
+		Address:   conn.RemoteAddr().String(),
+		Protocol:  "tcp",
+		LastSeen:  time.Now(),
+	}
+	
 	// Register client with client manager if available
 	if l.clientManager != nil {
 		fmt.Printf("DEBUG: Client manager type: %T\n", l.clientManager)
 		
-		// Create a simple client object with the connection information
-		client := struct {
-			Address string
-			ID      string
-		}{
-			Address: conn.RemoteAddr().String(),
-			ID:      fmt.Sprintf("client-%d", time.Now().UnixNano()),
-		}
-		
 		// Register client using type assertion
-		if cm, ok := l.clientManager.(interface{ RegisterClient(interface{}) string }); ok {
-			clientID := cm.RegisterClient(client)
+		if cm, ok := l.clientManager.(*client.Manager); ok {
+			clientID := cm.RegisterClient(newClient)
 			fmt.Printf("Registered client with ID %s\n", clientID)
 		} else {
-			fmt.Printf("Client manager does not implement RegisterClient method\n")
+			fmt.Printf("Client manager does not implement RegisterClient method or is not of type *client.Manager\n")
 		}
 	} else {
 		fmt.Printf("No client manager available\n")
