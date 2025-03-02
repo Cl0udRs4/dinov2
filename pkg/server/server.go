@@ -140,6 +140,9 @@ func (s *Server) Start() error {
 	// Initialize client manager
 	clientManager := client.NewManager()
 	
+	// Initialize listener manager with client manager
+	serverState.listenerManager = listener.NewManager(clientManager)
+	
 	// Initialize API if enabled
 	var apiRouter *api.Router
 	var authMiddleware *middleware.AuthMiddleware
