@@ -1,211 +1,118 @@
 package crypto
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
-// SessionID is a unique identifier for a client session
-type SessionID string
-
-// Session represents an encryption session with a client
+// Session represents an encryption session
 type Session struct {
-	ID            SessionID
-	Encryptor     Encryptor
-	CreatedAt     time.Time
-	LastActivity  time.Time
-	LastRotation  time.Time
-	RotationCount int
+	ID        SessionID
+	Encryptor Encryptor
+	Created   time.Time
+	LastUsed  time.Time
 }
 
-// SessionManager manages encryption sessions for multiple clients
+// SessionManager manages encryption sessions
 type SessionManager struct {
-	sessions      map[SessionID]*Session
-	mutex         sync.RWMutex
-	rotationTimer *time.Timer
-	rotationDone  chan struct{}
+	sessions map[string]*Session
+	mutex    sync.RWMutex
 }
 
 // NewSessionManager creates a new session manager
 func NewSessionManager() *SessionManager {
-	manager := &SessionManager{
-		sessions:     make(map[SessionID]*Session),
-		rotationDone: make(chan struct{}),
+	return &SessionManager{
+		sessions: make(map[string]*Session),
 	}
-	
-	// Start the key rotation timer
-	manager.startRotationTimer()
-	
-	return manager
 }
 
-// CreateSession creates a new encryption session with the specified algorithm
-func (m *SessionManager) CreateSession(id SessionID, algorithm Algorithm) (*Session, error) {
+// CreateSession creates a new encryption session
+func (m *SessionManager) CreateSession(sessionID SessionID, algorithm Algorithm) (*Session, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	
 	// Check if session already exists
-	if _, exists := m.sessions[id]; exists {
-		return nil, errors.New("session already exists")
+	if _, exists := m.sessions[string(sessionID)]; exists {
+		return nil, fmt.Errorf("session already exists")
 	}
 	
-	// Create a new encryptor
-	encryptor, err := Factory(algorithm)
+	// Create encryptor
+	encryptor, err := NewEncryptor(algorithm)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create encryptor: %w", err)
 	}
 	
-	// Create a new session
-	now := time.Now()
+	// Create session
 	session := &Session{
-		ID:            id,
-		Encryptor:     encryptor,
-		CreatedAt:     now,
-		LastActivity:  now,
-		LastRotation:  now,
-		RotationCount: 0,
+		ID:        sessionID,
+		Encryptor: encryptor,
+		Created:   time.Now(),
+		LastUsed:  time.Now(),
 	}
 	
-	// Add the session to the map
-	m.sessions[id] = session
+	// Add session to map
+	m.sessions[string(sessionID)] = session
 	
 	return session, nil
 }
 
-// GetSession retrieves an existing session
-func (m *SessionManager) GetSession(id SessionID) (*Session, error) {
+// GetSession gets a session by ID
+func (m *SessionManager) GetSession(sessionID SessionID) (*Session, error) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	
-	session, exists := m.sessions[id]
+	// Check if session exists
+	session, exists := m.sessions[string(sessionID)]
 	if !exists {
-		return nil, errors.New("session not found")
+		return nil, fmt.Errorf("session not found")
 	}
 	
-	// Update last activity time
-	session.LastActivity = time.Now()
+	// Update last used time
+	session.LastUsed = time.Now()
 	
 	return session, nil
 }
 
 // RemoveSession removes a session
-func (m *SessionManager) RemoveSession(id SessionID) error {
+func (m *SessionManager) RemoveSession(sessionID SessionID) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	
-	if _, exists := m.sessions[id]; !exists {
-		return errors.New("session not found")
+	// Check if session exists
+	if _, exists := m.sessions[string(sessionID)]; !exists {
+		return fmt.Errorf("session not found")
 	}
 	
-	delete(m.sessions, id)
-	return nil
-}
-
-// RotateSessionKey rotates the key for a specific session
-func (m *SessionManager) RotateSessionKey(id SessionID) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	
-	session, exists := m.sessions[id]
-	if !exists {
-		return errors.New("session not found")
-	}
-	
-	// Rotate the key
-	if err := session.Encryptor.RotateKey(); err != nil {
-		return err
-	}
-	
-	// Update session metadata
-	session.LastRotation = time.Now()
-	session.RotationCount++
+	// Remove session from map
+	delete(m.sessions, string(sessionID))
 	
 	return nil
 }
 
-// RotateAllKeys rotates keys for all active sessions
-func (m *SessionManager) RotateAllKeys() {
+// CleanupSessions removes expired sessions
+func (m *SessionManager) CleanupSessions(maxAge time.Duration) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	
+	// Get current time
 	now := time.Now()
 	
-	for _, session := range m.sessions {
-		// Skip inactive sessions (no activity in the last hour)
-		if now.Sub(session.LastActivity) > time.Hour {
-			continue
+	// Check each session
+	for id, session := range m.sessions {
+		// Check if session has expired
+		if now.Sub(session.LastUsed) > maxAge {
+			// Remove session
+			delete(m.sessions, id)
 		}
-		
-		// Rotate the key
-		if err := session.Encryptor.RotateKey(); err != nil {
-			// Log the error but continue with other sessions
-			continue
-		}
-		
-		// Update session metadata
-		session.LastRotation = now
-		session.RotationCount++
 	}
 }
 
-// startRotationTimer starts a timer to periodically rotate keys
-func (m *SessionManager) startRotationTimer() {
-	// Rotate keys every 12 hours
-	rotationInterval := 12 * time.Hour
-	
-	m.rotationTimer = time.NewTimer(rotationInterval)
-	
-	go func() {
-		for {
-			select {
-			case <-m.rotationTimer.C:
-				// Rotate all keys
-				m.RotateAllKeys()
-				
-				// Reset the timer
-				m.rotationTimer.Reset(rotationInterval)
-			case <-m.rotationDone:
-				// Stop the timer
-				if !m.rotationTimer.Stop() {
-					<-m.rotationTimer.C
-				}
-				return
-			}
-		}
-	}()
-}
-
-// Shutdown stops the session manager and cleans up resources
+// Shutdown shuts down the session manager
 func (m *SessionManager) Shutdown() {
-	// Signal the rotation timer to stop
-	close(m.rotationDone)
-	
-	// Clear all sessions
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	
 	// Clear all sessions
-	m.sessions = make(map[SessionID]*Session)
-}
-
-// GetSessionCount returns the number of active sessions
-func (m *SessionManager) GetSessionCount() int {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	
-	return len(m.sessions)
-}
-
-// GetActiveSessions returns a list of active session IDs
-func (m *SessionManager) GetActiveSessions() []SessionID {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	
-	ids := make([]SessionID, 0, len(m.sessions))
-	for id := range m.sessions {
-		ids = append(ids, id)
-	}
-	
-	return ids
+	m.sessions = make(map[string]*Session)
 }

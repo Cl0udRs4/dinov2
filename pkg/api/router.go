@@ -1,161 +1,278 @@
 package api
 
 import (
-	"context"
+	"dinoc2/pkg/client"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
-	
-	"dinoc2/pkg/api/middleware"
-	"dinoc2/pkg/client"
-	"dinoc2/pkg/listener"
-	"dinoc2/pkg/module/manager"
-	"dinoc2/pkg/task"
+	"time"
+
+	"github.com/golang-jwt/jwt/v4"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// Router handles HTTP API routing
+// Router handles API requests
 type Router struct {
-	listenerManager *listener.Manager
-	moduleManager   *manager.ModuleManager
-	taskManager     *task.Manager
-	clientManager   *client.Manager
-	routes          map[string]http.HandlerFunc
-	authMiddleware  *middleware.AuthMiddleware
+	config       map[string]interface{}
+	routes       map[string]func(http.ResponseWriter, *http.Request)
+	clientManager interface{}
+	taskManager   interface{}
 }
 
-// NewRouter creates a new API router
-func NewRouter(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager, clientManager *client.Manager, authMiddleware *middleware.AuthMiddleware) *Router {
-	r := &Router{
-		listenerManager: listenerManager,
-		moduleManager:   moduleManager,
-		taskManager:     taskManager,
-		clientManager:   clientManager,
-		routes:          make(map[string]http.HandlerFunc),
-		authMiddleware:  authMiddleware,
+// NewRouter creates a new router
+func NewRouter(config map[string]interface{}) *Router {
+	router := &Router{
+		config: config,
+		routes: make(map[string]func(http.ResponseWriter, *http.Request)),
 	}
 	
 	// Register routes
-	r.registerRoutes()
+	router.RegisterAuthRoutes()
+	router.RegisterClientRoutes()
 	
-	// Register authentication routes if middleware is provided
-	if authMiddleware != nil {
-		r.RegisterAuthRoutes(authMiddleware)
-	}
-	
-	return r
+	return router
 }
 
-// NewRouterWithoutAuth creates a new API router without authentication
-// This is for backward compatibility
-func NewRouterWithoutAuth(listenerManager *listener.Manager, moduleManager *manager.ModuleManager, taskManager *task.Manager, clientManager *client.Manager) *Router {
-	return NewRouter(listenerManager, moduleManager, taskManager, clientManager, nil)
+// SetClientManager sets the client manager for the router
+func (r *Router) SetClientManager(clientManager interface{}) {
+	r.clientManager = clientManager
+	fmt.Printf("DEBUG: Router client manager set: %T\n", clientManager)
 }
 
-// registerRoutes registers all API routes
-func (r *Router) registerRoutes() {
-	// Listener routes
-	r.routes["/api/listeners"] = r.handleListListeners
-	r.routes["/api/listeners/create"] = r.handleCreateListener
-	r.routes["/api/listeners/delete"] = r.handleDeleteListener
-	r.routes["/api/listeners/status"] = r.handleListenerStatus
-	
-	// Task routes
-	r.routes["/api/tasks"] = r.handleListTasks
-	r.routes["/api/tasks/create"] = r.handleCreateTask
-	r.routes["/api/tasks/status"] = r.handleTaskStatus
-	
-	// Documentation route
-	r.routes["/api/docs"] = r.handleDocs
-	
-	// Module routes
-	r.routes["/api/modules"] = r.handleListModules
-	r.routes["/api/modules/load"] = r.handleLoadModule
-	r.routes["/api/modules/exec"] = r.handleExecModule
-	
-	// Client routes
-	r.routes["/api/clients"] = r.handleListClients
-	r.routes["/api/clients/tasks"] = r.handleClientTasks
-	
-	// Protocol switching routes
-	r.routes["/api/protocol/switch"] = r.handleProtocolSwitch
+// SetTaskManager sets the task manager for the router
+func (r *Router) SetTaskManager(taskManager interface{}) {
+	r.taskManager = taskManager
 }
 
 // ServeHTTP implements the http.Handler interface
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Set common headers
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Server", "Microsoft-IIS/10.0")
+	// Set CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	
-	// Skip authentication for login and refresh endpoints
-	if req.URL.Path == "/api/auth/login" || req.URL.Path == "/api/auth/refresh" {
-		// Find handler for the requested path
-		for path, handler := range r.routes {
-			if strings.HasPrefix(req.URL.Path, path) {
-				handler(w, req)
-				return
-			}
-		}
-		
-		// No handler found, return 404
-		http.NotFound(w, req)
+	// Handle OPTIONS requests
+	if req.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	
-	// Apply authentication middleware if available
-	if r.authMiddleware != nil {
-		// Skip authentication for login, refresh, and docs endpoints
-		if req.URL.Path == "/api/auth/login" || req.URL.Path == "/api/auth/refresh" || req.URL.Path == "/api/docs" {
-			// Allow these endpoints without authentication
-		} else {
-			// Get the Authorization header
-			authHeader := req.Header.Get("Authorization")
-			if authHeader == "" {
-				writeError(w, "Authorization header required", http.StatusUnauthorized)
-				return
-			}
-			
-			// Check if the Authorization header has the correct format
-			if !strings.HasPrefix(authHeader, "Bearer ") {
-				writeError(w, "Invalid authorization format", http.StatusUnauthorized)
-				return
-			}
-			
-			// Extract the token
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			
-			// Validate the token
-			_, claims, err := r.authMiddleware.ValidateToken(tokenString)
-			if err != nil {
-				writeError(w, fmt.Sprintf("Invalid token: %v", err), http.StatusUnauthorized)
-				return
-			}
-			
-			// Add claims to the request context
-			ctx := context.WithValue(req.Context(), "claims", claims)
-			req = req.WithContext(ctx)
-		}
+	// Check if authentication is enabled
+	authEnabled, ok := r.config["auth_enabled"].(bool)
+	if !ok {
+		authEnabled = true
 	}
 	
-	// Find handler for the requested path
-	for path, handler := range r.routes {
-		if strings.HasPrefix(req.URL.Path, path) {
-			handler(w, req)
+	// Check if route requires authentication
+	if authEnabled && !strings.HasPrefix(req.URL.Path, "/api/auth/") {
+		// Validate JWT token
+		token := r.extractToken(req)
+		if token == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		// Validate token
+		_, err := r.validateToken(token)
+		if err != nil {
+			http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
 			return
 		}
 	}
 	
-	// No handler found, return 404
-	http.NotFound(w, req)
+	// Find route handler
+	handler, ok := r.routes[req.URL.Path]
+	if !ok {
+		http.NotFound(w, req)
+		return
+	}
+	
+	// Call handler
+	handler(w, req)
 }
 
-// writeJSON writes a JSON response
-func writeJSON(w http.ResponseWriter, data interface{}, statusCode int) {
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
+// RegisterAuthRoutes registers authentication routes
+func (r *Router) RegisterAuthRoutes() {
+	// Register login route
+	r.routes["/api/auth/login"] = r.handleLogin
 }
 
-// writeError writes an error response
-func writeError(w http.ResponseWriter, message string, statusCode int) {
-	writeJSON(w, map[string]string{"error": message}, statusCode)
+// handleLogin handles login requests
+func (r *Router) handleLogin(w http.ResponseWriter, req *http.Request) {
+	// Only allow POST requests
+	if req.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// Parse request body
+	var loginRequest struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	
+	err := json.NewDecoder(req.Body).Decode(&loginRequest)
+	if err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Get user auth from config
+	userAuth, ok := r.config["user_auth"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Authentication not configured", http.StatusInternalServerError)
+		return
+	}
+	
+	// Get username and password hash
+	username, ok := userAuth["username"].(string)
+	if !ok {
+		http.Error(w, "Username not configured", http.StatusInternalServerError)
+		return
+	}
+	
+	// Check if password is provided directly (for testing)
+	password, ok := userAuth["password"].(string)
+	if ok {
+		fmt.Printf("Validating credentials: username=%s, password=%s\n", loginRequest.Username, loginRequest.Password)
+		
+		// Check username and password
+		if loginRequest.Username != username || loginRequest.Password != password {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		// Get password hash
+		passwordHash, ok := userAuth["password_hash"].(string)
+		if !ok {
+			http.Error(w, "Password hash not configured", http.StatusInternalServerError)
+			return
+		}
+		
+		fmt.Printf("Stored username: %s, passwordHash: %s\n", username, passwordHash)
+		
+		// Check username
+		if loginRequest.Username != username {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		
+		// Check password
+		err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(loginRequest.Password))
+		if err != nil {
+			http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+			return
+		}
+	}
+	
+	// Get user role
+	role, ok := userAuth["role"].(string)
+	if !ok {
+		role = "user"
+	}
+	
+	fmt.Printf("Credentials valid, returning role: %s\n", role)
+	
+	// Generate JWT token
+	token, err := r.generateToken(loginRequest.Username, role)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	
+	// Return token
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"token": token,
+		"role":  role,
+	})
+}
+
+// generateToken generates a JWT token
+func (r *Router) generateToken(username, role string) (string, error) {
+	// Get JWT secret
+	jwtSecret, ok := r.config["jwt_secret"].(string)
+	if !ok {
+		return "", fmt.Errorf("JWT secret not configured")
+	}
+	
+	// Get token expiry
+	tokenExpiryFloat, ok := r.config["token_expiry"].(float64)
+	if !ok {
+		tokenExpiryFloat = 60
+	}
+	tokenExpiry := time.Duration(tokenExpiryFloat) * time.Minute
+	
+	// Create token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": username,
+		"role":     role,
+		"iss":      "dinoc2",
+		"sub":      username,
+		"exp":      time.Now().Add(tokenExpiry).Unix(),
+		"nbf":      time.Now().Unix(),
+		"iat":      time.Now().Unix(),
+	})
+	
+	// Sign token
+	tokenString, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+	
+	return tokenString, nil
+}
+
+// validateToken validates a JWT token
+func (r *Router) validateToken(tokenString string) (jwt.MapClaims, error) {
+	// Get JWT secret
+	jwtSecret, ok := r.config["jwt_secret"].(string)
+	if !ok {
+		return nil, fmt.Errorf("JWT secret not configured")
+	}
+	
+	// Parse token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Validate signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		
+		return []byte(jwtSecret), nil
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+	
+	// Validate token
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+	
+	// Get claims
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	
+	return claims, nil
+}
+
+// extractToken extracts the JWT token from the request
+func (r *Router) extractToken(req *http.Request) string {
+	// Get Authorization header
+	authHeader := req.Header.Get("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+	
+	// Check if header starts with Bearer
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return ""
+	}
+	
+	// Extract token
+	return strings.TrimPrefix(authHeader, "Bearer ")
 }

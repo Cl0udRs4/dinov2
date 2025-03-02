@@ -1,6 +1,7 @@
 package api
 
 import (
+	"dinoc2/pkg/client"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,8 +32,14 @@ func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
 	fmt.Printf("DEBUG: handleListClients called, client manager type: %T\n", r.clientManager)
 
 	// Get clients from client manager
-	clients := r.clientManager.ListClients()
-	fmt.Printf("DEBUG: Got %d clients from client manager\n", len(clients))
+	var clients []*client.Client
+	if cm, ok := r.clientManager.(*client.Manager); ok {
+		clients = cm.ListClients()
+		fmt.Printf("DEBUG: Got %d clients from client manager\n", len(clients))
+	} else {
+		http.Error(w, "Client manager does not implement ListClients method", http.StatusInternalServerError)
+		return
+	}
 
 	// Convert clients to JSON-friendly format
 	clientsJSON := make([]map[string]interface{}, 0, len(clients))
