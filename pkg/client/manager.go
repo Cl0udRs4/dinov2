@@ -4,11 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
+)
+package client
+
+import (
+	"errors"
+	"fmt"
+	"sync"
 )
 
 // Manager handles client connections and management
 type Manager struct {
-	clients     map[string]*Client
+	clients     map[string]interface{}
 	clientMutex sync.RWMutex
 }
 
@@ -16,19 +24,32 @@ type Manager struct {
 func NewManager() *Manager {
 	fmt.Println("DEBUG: Creating new client manager")
 	return &Manager{
-		clients: make(map[string]*Client),
+		clients: make(map[string]interface{}),
 	}
 }
 
 // RegisterClient registers a client with the manager
-func (m *Manager) RegisterClient(client *Client) string {
+func (m *Manager) RegisterClient(client interface{}) string {
 	m.clientMutex.Lock()
 	defer m.clientMutex.Unlock()
 	
 	fmt.Printf("DEBUG: RegisterClient called with client: %+v\n", client)
 	
-	// Use GetSessionID() method instead of directly accessing SessionID field
-	clientID := client.GetSessionID()
+	var clientID string
+	
+	// Try to get client ID based on type
+	switch c := client.(type) {
+	case *Client:
+		clientID = c.GetSessionID()
+	case struct {
+		Address string
+		ID      string
+	}:
+		clientID = c.ID
+	default:
+		clientID = fmt.Sprintf("unknown-%d", time.Now().UnixNano())
+	}
+	
 	fmt.Printf("DEBUG: Using clientID: %s\n", clientID)
 	
 	m.clients[clientID] = client
@@ -51,7 +72,7 @@ func (m *Manager) UnregisterClient(clientID string) error {
 }
 
 // GetClient retrieves a client by ID
-func (m *Manager) GetClient(clientID string) (*Client, error) {
+func (m *Manager) GetClient(clientID string) (interface{}, error) {
 	m.clientMutex.RLock()
 	defer m.clientMutex.RUnlock()
 	
@@ -73,37 +94,14 @@ func (m *Manager) ListClients() []*Client {
 		fmt.Printf("DEBUG: Client ID: %s\n", id)
 	}
 	
-	clients := make([]*Client, 0, len(m.clients))
+	clients := make([]*Client, 0)
 	for _, client := range m.clients {
-		clients = append(clients, client)
-	}
-	
-	return clients
-}
-
-// SwitchProtocol switches a client to a different protocol
-func (m *Manager) SwitchProtocol(clientID string, protocol string) error {
-	client, err := m.GetClient(clientID)
-	if err != nil {
-		return err
-	}
-	
-	// Convert protocol string to ProtocolType
-	protocolType := ProtocolType(protocol)
-	
-	// Check if the protocol is supported
-	supported := false
-	for _, p := range client.config.Protocols {
-		if p == protocolType {
-			supported = true
-			break
+		if c, ok := client.(*Client); ok {
+			clients = append(clients, c)
+		} else {
+			fmt.Printf("DEBUG: Client is not of type *Client: %T\n", client)
 		}
 	}
 	
-	if !supported {
-		return fmt.Errorf("protocol %s not supported by client", protocol)
-	}
-	
-	// Switch the protocol
-	return client.HandleProtocolSwitchCommand(protocol)
+	return clients
 }

@@ -4,10 +4,6 @@ import (
 	"fmt"
 	"net"
 	"time"
-
-	"github.com/Cl0udRs4/dinov2/pkg/client"
-	"github.com/Cl0udRs4/dinov2/pkg/crypto"
-	"github.com/Cl0udRs4/dinov2/pkg/protocol"
 )
 
 // TCPListener implements a TCP listener for the C2 server
@@ -105,83 +101,23 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 
 	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
 
-	// Set read deadline to prevent hanging connections
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-
-	// Read initial packet
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Printf("Failed to read from connection: %v\n", err)
-		return
-	}
-
-	// Reset read deadline
-	conn.SetReadDeadline(time.Time{})
-
-	// Decode packet
-	packet, err := protocol.DecodePacket(buffer[:n])
-	if err != nil {
-		fmt.Printf("Failed to decode packet: %v\n", err)
-		return
-	}
-
-	// Create a simple protocol handler for this connection
-	protocolHandler := protocol.NewProtocolHandler()
-	
-	// Generate a unique session ID
-	sessionID := crypto.GenerateSessionID()
-	
-	// Create a session with AES encryption (default, will be updated based on client handshake)
-	err = protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
-	if err != nil {
-		fmt.Printf("Failed to create session: %v\n", err)
-		return
-	}
-
-	// Get encryption algorithm from packet
-	var algorithm crypto.Algorithm
-	if packet.Header.Type == protocol.PacketTypeHandshake {
-		// Extract algorithm from handshake data
-		if len(packet.Data) > 0 {
-			algorithm = crypto.Algorithm(packet.Data)
-		} else {
-			algorithm = crypto.AlgorithmAES // Default to AES
-		}
-	} else {
-		algorithm = crypto.AlgorithmAES // Default to AES
-	}
-
-	// Update session with the correct encryption algorithm
-	err = protocolHandler.UpdateSessionAlgorithm(sessionID, algorithm)
-	if err != nil {
-		fmt.Printf("Failed to update session algorithm: %v\n", err)
-		return
-	}
-
-	// Create client configuration
-	clientConfig := &client.ClientConfig{
-		ServerAddress:  conn.RemoteAddr().String(),
-		Protocols:      []client.ProtocolType{client.ProtocolTypeTCP},
-		EncryptionAlg:  string(algorithm),
-		HeartbeatInterval: 30 * time.Second,
-	}
-
-	// Create new client
-	newClient, err := client.NewClient(clientConfig)
-	if err != nil {
-		fmt.Printf("Failed to create client: %v\n", err)
-		return
-	}
-
 	// Register client with client manager if available
 	if l.clientManager != nil {
 		fmt.Printf("DEBUG: Client manager type: %T\n", l.clientManager)
 		
-		// Type assertion to check if client manager implements RegisterClient
-		if cm, ok := l.clientManager.(*client.Manager); ok {
+		// Type assertion to check if client manager implements RegisterClient method
+		if cm, ok := l.clientManager.(interface{ RegisterClient(interface{}) string }); ok {
+			// Create a simple client object with the connection information
+			client := struct {
+				Address string
+				ID      string
+			}{
+				Address: conn.RemoteAddr().String(),
+				ID:      fmt.Sprintf("client-%d", time.Now().UnixNano()),
+			}
+			
 			// Register client
-			clientID := cm.RegisterClient(newClient)
+			clientID := cm.RegisterClient(client)
 			fmt.Printf("Registered client with ID %s\n", clientID)
 		} else {
 			fmt.Printf("Client manager does not implement RegisterClient method\n")
@@ -190,72 +126,19 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 		fmt.Printf("No client manager available\n")
 	}
 
-	// Send handshake response
-	response := protocol.NewPacket(protocol.PacketTypeHandshakeResponse, []byte(algorithm))
-	encodedResponse, err := protocol.EncodePacket(response)
-	if err != nil {
-		fmt.Printf("Failed to encode response: %v\n", err)
-		return
-	}
-
-	_, err = conn.Write(encodedResponse)
-	if err != nil {
-		fmt.Printf("Failed to send response: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Handshake completed with %s using %s encryption\n", conn.RemoteAddr(), algorithm)
-
-	// Handle client communication
-	l.handleClientCommunication(conn, protocolHandler, sessionID, newClient)
-}
-
-// handleClientCommunication handles communication with a client
-func (l *TCPListener) handleClientCommunication(conn net.Conn, protocolHandler *protocol.ProtocolHandler, sessionID crypto.SessionID, client *client.Client) {
+	// Simple echo server for testing
 	buffer := make([]byte, 1024)
-
 	for {
-		// Read packet
 		n, err := conn.Read(buffer)
 		if err != nil {
 			fmt.Printf("Connection closed: %v\n", err)
 			break
 		}
 
-		// Decode packet
-		packet, err := protocol.DecodePacket(buffer[:n])
+		_, err = conn.Write(buffer[:n])
 		if err != nil {
-			fmt.Printf("Failed to decode packet: %v\n", err)
-			continue
-		}
-
-		// Process packet based on type
-		switch packet.Header.Type {
-		case protocol.PacketTypeHeartbeat:
-			// Respond to heartbeat
-			response := protocol.NewPacket(protocol.PacketTypeHeartbeat, nil)
-			encodedResponse, err := protocol.EncodePacket(response)
-			if err != nil {
-				fmt.Printf("Failed to encode heartbeat response: %v\n", err)
-				continue
-			}
-
-			_, err = conn.Write(encodedResponse)
-			if err != nil {
-				fmt.Printf("Failed to send heartbeat response: %v\n", err)
-				continue
-			}
-
-			fmt.Printf("Heartbeat received from %s\n", conn.RemoteAddr())
-
-		case protocol.PacketTypeDisconnect:
-			// Client is disconnecting
-			fmt.Printf("Client %s is disconnecting\n", conn.RemoteAddr())
-			return
-
-		default:
-			// Handle other packet types
-			fmt.Printf("Received packet type %d from %s\n", packet.Header.Type, conn.RemoteAddr())
+			fmt.Printf("Failed to send response: %v\n", err)
+			break
 		}
 	}
 }
