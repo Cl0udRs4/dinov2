@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -24,8 +25,20 @@ func (r *Router) handleProtocolSwitch(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	
-	// This would typically call a protocol switching service
-	// For now, we'll just return a success message
+	// Get the client from the client manager
+	client, err := r.clientManager.GetClient(switchReq.ClientID)
+	if err != nil {
+		writeError(w, fmt.Sprintf("Client not found: %v", err), http.StatusNotFound)
+		return
+	}
+	
+	// Send protocol switch command to the client
+	err = client.SwitchProtocol(switchReq.Protocol)
+	if err != nil {
+		writeError(w, fmt.Sprintf("Failed to switch protocol: %v", err), http.StatusInternalServerError)
+		return
+	}
+	
 	writeJSON(w, map[string]string{
 		"status": "success",
 		"message": "Protocol switch initiated",

