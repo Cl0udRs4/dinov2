@@ -16,8 +16,7 @@ const (
 	AlgorithmChacha20 Algorithm = "chacha20"
 )
 
-// SessionID is a unique identifier for a client session
-type SessionID string
+// SessionID is already defined in session.go
 
 // Encryptor interface defines methods that all encryption implementations must support
 type Encryptor interface {
