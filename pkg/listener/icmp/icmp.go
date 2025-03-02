@@ -57,7 +57,16 @@ func (l *ICMPListener) Start() error {
 	}
 
 	// Create ICMP connection
-	conn, err := icmp.ListenPacket(l.config.Protocol+":ipv4", l.config.ListenAddress)
+	// Determine the correct network string format based on protocol
+	var network string
+	if l.config.Protocol == "icmp" {
+		// For privileged raw ICMP endpoints
+		network = "ip4:1" // Use protocol number 1 for ICMP
+	} else {
+		// For non-privileged UDP-based ICMP
+		network = "udp4"
+	}
+	conn, err := icmp.ListenPacket(network, l.config.ListenAddress)
 	if err != nil {
 		l.status = "error"
 		return fmt.Errorf("failed to start ICMP listener: %w", err)
