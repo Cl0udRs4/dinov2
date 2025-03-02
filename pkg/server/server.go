@@ -12,6 +12,7 @@ import (
 	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
 	"dinoc2/pkg/auth"
+	"dinoc2/pkg/client"
 	"dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
 	
@@ -136,6 +137,9 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to initialize module manager: %v", err)
 	}
 	
+	// Initialize client manager
+	clientManager := client.NewManager()
+	
 	// Initialize API if enabled
 	var apiRouter *api.Router
 	var authMiddleware *middleware.AuthMiddleware
@@ -152,7 +156,7 @@ func (s *Server) Start() error {
 		}
 		
 		// Create API router
-		apiRouter = api.NewRouter(serverState.listenerManager, moduleManager, serverState.taskManager, authMiddleware)
+		apiRouter = api.NewRouter(serverState.listenerManager, moduleManager, serverState.taskManager, clientManager, authMiddleware)
 		
 		// Start dedicated API server if configured
 		if serverState.config.API.Port > 0 {

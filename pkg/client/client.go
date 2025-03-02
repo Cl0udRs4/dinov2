@@ -42,6 +42,7 @@ const (
 type ClientConfig struct {
 	ServerAddress     string
 	Protocols         []ProtocolType
+	EncryptionAlg     string
 	HeartbeatInterval time.Duration
 	ReconnectInterval time.Duration
 	MaxRetries        int
@@ -57,6 +58,7 @@ func DefaultConfig() *ClientConfig {
 	return &ClientConfig{
 		ServerAddress:     "",
 		Protocols:         []ProtocolType{ProtocolTCP},
+		EncryptionAlg:     "aes",
 		HeartbeatInterval: 30 * time.Second,
 		ReconnectInterval: 5 * time.Second,
 		MaxRetries:        5,
@@ -216,6 +218,35 @@ func (c *Client) GetState() ConnectionState {
 	c.stateMutex.RLock()
 	defer c.stateMutex.RUnlock()
 	return c.state
+}
+
+// GetSessionID returns the client's session ID
+func (c *Client) GetSessionID() string {
+	return string(c.sessionID)
+}
+
+// GetCurrentProtocol returns the client's current protocol
+func (c *Client) GetCurrentProtocol() string {
+	c.stateMutex.RLock()
+	defer c.stateMutex.RUnlock()
+	return string(c.currentProtocol)
+}
+
+// GetLastHeartbeat returns the time of the last heartbeat
+func (c *Client) GetLastHeartbeat() time.Time {
+	c.stateMutex.RLock()
+	defer c.stateMutex.RUnlock()
+	return c.lastHeartbeat
+}
+
+// GetEncryptionAlgorithm returns the client's encryption algorithm
+func (c *Client) GetEncryptionAlgorithm() string {
+	return c.config.EncryptionAlg
+}
+
+// SwitchProtocol switches the client to a different protocol
+func (c *Client) SwitchProtocol(protocol string) error {
+	return c.HandleProtocolSwitchCommand(protocol)
 }
 
 // connect establishes a connection using the current protocol
