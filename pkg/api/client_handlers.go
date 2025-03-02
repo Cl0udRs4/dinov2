@@ -58,6 +58,7 @@ func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clients": clientsJSON,
+		"status": "success",
 	})
 }
 
@@ -93,5 +94,6 @@ func (r *Router) handleClientTasks(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tasks": tasks,
+		"status": "success",
 	})
 }
