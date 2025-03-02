@@ -5,39 +5,31 @@ import (
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
 	"fmt"
+	"log"
 	"net"
-	"time"
+	"sync"
 )
 
 // TCPListener implements a TCP listener for the C2 server
 type TCPListener struct {
-	config        map[string]interface{}
+	id            string
 	address       string
 	port          int
 	listener      net.Listener
+	connections   map[net.Conn]bool
+	connMutex     sync.RWMutex
 	clientManager interface{}
 	isRunning     bool
 }
 
 // NewTCPListener creates a new TCP listener
 func NewTCPListener(config ListenerConfig) (*TCPListener, error) {
-	// Extract address and port
-	address := config.Address
-	port := config.Port
-	
-	if address == "" {
-		return nil, fmt.Errorf("invalid configuration: listener address is required")
-	}
-	
-	if port <= 0 {
-		return nil, fmt.Errorf("invalid configuration: listener port is required")
-	}
-
 	return &TCPListener{
-		config:    config.Options,
-		address:   address,
-		port:      port,
-		isRunning: false,
+		id:          config.ID,
+		address:     config.Address,
+		port:        config.Port,
+		connections: make(map[net.Conn]bool),
+		isRunning:   false,
 	}, nil
 }
 
@@ -52,21 +44,19 @@ func (l *TCPListener) Start() error {
 	if l.isRunning {
 		return fmt.Errorf("listener is already running")
 	}
-
+	
 	// Create TCP listener
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", l.address, l.port))
 	if err != nil {
 		return fmt.Errorf("failed to create TCP listener: %w", err)
 	}
-
+	
 	l.listener = listener
 	l.isRunning = true
-
-	fmt.Printf("TCP listener started on %s:%d\n", l.address, l.port)
-
-	// Start accepting connections
+	
+	// Start accepting connections in a goroutine
 	go l.acceptConnections()
-
+	
 	return nil
 }
 
@@ -75,7 +65,7 @@ func (l *TCPListener) Stop() error {
 	if !l.isRunning {
 		return nil
 	}
-
+	
 	// Close listener
 	if l.listener != nil {
 		err := l.listener.Close()
@@ -83,10 +73,17 @@ func (l *TCPListener) Stop() error {
 			return fmt.Errorf("failed to close TCP listener: %w", err)
 		}
 	}
-
+	
+	// Close all connections
+	l.connMutex.Lock()
+	for conn := range l.connections {
+		conn.Close()
+	}
+	l.connections = make(map[net.Conn]bool)
+	l.connMutex.Unlock()
+	
 	l.isRunning = false
-	fmt.Printf("TCP listener stopped\n")
-
+	
 	return nil
 }
 
@@ -97,23 +94,35 @@ func (l *TCPListener) acceptConnections() {
 		conn, err := l.listener.Accept()
 		if err != nil {
 			if l.isRunning {
-				fmt.Printf("Failed to accept connection: %v\n", err)
+				log.Printf("Failed to accept TCP connection: %v", err)
 			}
 			continue
 		}
-
-		// Handle connection in a new goroutine
+		
+		// Add connection to map
+		l.connMutex.Lock()
+		l.connections[conn] = true
+		l.connMutex.Unlock()
+		
+		// Handle connection in a goroutine
 		go l.handleConnection(conn)
 	}
 }
 
 // handleConnection handles a TCP connection
 func (l *TCPListener) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	fmt.Printf("New connection from %s\n", conn.RemoteAddr())
-
-	// Create a simple protocol handler for this connection
+	// Defer connection cleanup
+	defer func() {
+		// Close connection
+		conn.Close()
+		
+		// Remove connection from map
+		l.connMutex.Lock()
+		delete(l.connections, conn)
+		l.connMutex.Unlock()
+	}()
+	
+	// Create a protocol handler for processing the data
 	protocolHandler := protocol.NewProtocolHandler()
 	
 	// Generate a unique session ID
@@ -122,7 +131,7 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	// Create a session with AES encryption (default, will be updated based on client handshake)
 	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
 	if err != nil {
-		fmt.Printf("Failed to create session: %v\n", err)
+		log.Printf("Failed to create session: %v", err)
 		return
 	}
 	
@@ -143,19 +152,55 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	} else {
 		fmt.Printf("No client manager available\n")
 	}
-
-	// Simple echo server for testing
-	buffer := make([]byte, 1024)
+	
+	// Buffer for reading data
+	buffer := make([]byte, 4096)
+	
+	// Read loop
 	for {
+		// Read data
 		n, err := conn.Read(buffer)
 		if err != nil {
-			fmt.Printf("Connection closed: %v\n", err)
+			log.Printf("TCP read error: %v", err)
 			break
 		}
-
-		_, err = conn.Write(buffer[:n])
+		
+		// Process data
+		data := buffer[:n]
+		
+		// Process the incoming packet
+		packet, err := protocol.DecodePacket(data)
 		if err != nil {
-			fmt.Printf("Failed to send response: %v\n", err)
+			log.Printf("Failed to decode packet: %v", err)
+			continue
+		}
+		
+		// Update client last seen timestamp
+		newClient.UpdateLastSeen()
+		
+		// Prepare a response packet
+		responsePacket := &protocol.Packet{
+			Header: protocol.PacketHeader{
+				Version:      protocol.ProtocolVersion,
+				EncAlgorithm: protocol.EncryptionAlgorithmNone,
+				Type:         protocol.PacketTypeResponse,
+				TaskID:       packet.Header.TaskID,
+				Checksum:     0, // Will be calculated during encoding
+			},
+			Data: []byte("OK"),
+		}
+		
+		// Encode response packet
+		responseData, err := protocol.EncodePacket(responsePacket)
+		if err != nil {
+			log.Printf("Failed to encode response packet: %v", err)
+			continue
+		}
+		
+		// Send response
+		_, err = conn.Write(responseData)
+		if err != nil {
+			log.Printf("TCP write error: %v", err)
 			break
 		}
 	}
