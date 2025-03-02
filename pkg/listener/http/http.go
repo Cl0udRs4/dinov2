@@ -15,6 +15,7 @@ import (
 	// "dinoc2/pkg/api" - removed to avoid import cycle
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
+	clientmanager "dinoc2/pkg/client/manager"
 )
 
 // HTTPListener implements the Listener interface for HTTP/HTTP2 protocol
@@ -186,6 +187,13 @@ func (l *HTTPListener) RegisterHandler(path string, handler http.HandlerFunc) {
 func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 	
+	// Register client with the client manager
+	clientID := r.RemoteAddr
+	if clientManager := GetClientManager(); clientManager != nil {
+		clientManager.RegisterClient(clientID, r.RemoteAddr, "http")
+		defer clientManager.UnregisterClient(clientID)
+	}
+	
 	// Check if this is an API request
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		if l.apiHandler != nil {
@@ -275,4 +283,12 @@ func CreateTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 	}, nil
+}
+
+// GetClientManager returns the client manager from the listener package
+func GetClientManager() *clientmanager.ClientManager {
+	// This is a wrapper around the listener package's GetClientManager function
+	// We can't import the listener package directly due to import cycles
+	// So we rely on the client manager being set globally
+	return clientmanager.GetGlobalClientManager()
 }

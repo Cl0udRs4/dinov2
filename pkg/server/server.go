@@ -180,6 +180,8 @@ func (s *Server) Start() error {
 	
 	// Set the client manager in the listener package
 	listener.SetClientManager(serverState.clientManager)
+	// Set the global client manager
+	clientmanager.SetGlobalClientManager(serverState.clientManager)
 	
 	// Start all listeners
 	for _, listenerConfig := range serverState.config.Listeners {

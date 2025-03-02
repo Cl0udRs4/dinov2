@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+var (
+	globalClientManager     *ClientManager
+	globalClientManagerLock sync.RWMutex
+)
+
 // ClientInfo represents information about a connected client
 type ClientInfo struct {
 	ID          string    `json:"id"`
@@ -82,4 +87,18 @@ func (m *ClientManager) ListClients() []*ClientInfo {
 	}
 
 	return clients
+}
+
+// SetGlobalClientManager sets the global client manager
+func SetGlobalClientManager(cm *ClientManager) {
+	globalClientManagerLock.Lock()
+	defer globalClientManagerLock.Unlock()
+	globalClientManager = cm
+}
+
+// GetGlobalClientManager returns the global client manager
+func GetGlobalClientManager() *ClientManager {
+	globalClientManagerLock.RLock()
+	defer globalClientManagerLock.RUnlock()
+	return globalClientManager
 }
