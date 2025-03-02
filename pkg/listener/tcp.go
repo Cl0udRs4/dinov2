@@ -179,7 +179,7 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 		fmt.Printf("DEBUG: Client manager type: %T\n", l.clientManager)
 		
 		// Type assertion to check if client manager implements RegisterClient
-		if cm, ok := l.clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+		if cm, ok := l.clientManager.(*client.Manager); ok {
 			// Register client
 			clientID := cm.RegisterClient(newClient)
 			fmt.Printf("Registered client with ID %s\n", clientID)
