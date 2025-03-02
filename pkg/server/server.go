@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
 )
 
 // Server represents the C2 server
@@ -29,14 +27,8 @@ func NewServer(configFile string) (*Server, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Create client manager
-	clientManager := client.NewManager()
-
 	// Create listener manager
 	listenerManager := listener.NewManager()
-	
-	// Pass client manager to listener manager
-	listenerManager.SetClientManager(clientManager)
 
 	// Create API server if enabled
 	var apiServer *api.Server
@@ -47,18 +39,33 @@ func NewServer(configFile string) (*Server, error) {
 				return nil, fmt.Errorf("failed to create API server: %w", err)
 			}
 			
-			// Pass client manager to API server
-			apiServer.SetClientManager(clientManager)
+			// Pass user auth to API server
+			if userAuth, ok := config["user_auth"].(map[string]interface{}); ok {
+				fmt.Printf("Setting user auth: %+v\n", userAuth)
+				apiServer.SetUserAuth(userAuth)
+			}
 		}
 	}
 
 	return &Server{
 		config:         config,
 		listenerManager: listenerManager,
-		clientManager:   clientManager,
 		apiServer:       apiServer,
 		isRunning:       false,
 	}, nil
+}
+
+// SetClientManager sets the client manager for the server
+func (s *Server) SetClientManager(clientManager *client.Manager) {
+	s.clientManager = clientManager
+	
+	// Pass client manager to listener manager
+	s.listenerManager.SetClientManager(clientManager)
+	
+	// Pass client manager to API server if available
+	if s.apiServer != nil {
+		s.apiServer.SetClientManager(clientManager)
+	}
 }
 
 // Start starts the server
@@ -120,19 +127,6 @@ func (s *Server) Stop() error {
 
 	s.isRunning = false
 	return nil
-}
-
-// WaitForInterrupt waits for interrupt signal
-func (s *Server) WaitForInterrupt() {
-	// Create channel for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// Wait for signal
-	<-sigChan
-
-	// Stop server
-	s.Stop()
 }
 
 // loadConfig loads the server configuration from a file

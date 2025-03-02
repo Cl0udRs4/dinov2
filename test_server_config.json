@@ -10,7 +10,7 @@
   },
   "user_auth": {
     "username": "admin",
-    "password_hash": "$2a$10$nyjLS2g.qpd5raNbQR5ceevt07NHGuM3Hq6Cw3MaVvZ8DsNxEqMNi",
+    "password_hash": "$2a$10$sF5K8OIhsw6uVKQ0k2hrZeo9a9tQSifxhxw5BeAXP3gxGUto2NGOy",
     "role": "admin"
   },
   "listeners": [
