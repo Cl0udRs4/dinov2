@@ -24,7 +24,9 @@ func (m *Manager) RegisterClient(client *Client) string {
 	m.clientMutex.Lock()
 	defer m.clientMutex.Unlock()
 	
-	clientID := string(client.sessionID)
+	// Use GetSessionID() method instead of directly accessing sessionID field
+	clientID := client.GetSessionID()
+	
 	m.clients[clientID] = client
 	
 	return clientID

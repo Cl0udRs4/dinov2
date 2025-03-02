@@ -74,7 +74,7 @@ func DefaultConfig() *ClientConfig {
 type Client struct {
 	config          *ClientConfig
 	protocolHandler *protocol.ProtocolHandler
-	sessionID       crypto.SessionID
+	SessionID       crypto.SessionID
 	currentProtocol ProtocolType
 	protocolIndex   int
 	state           ConnectionState
@@ -117,7 +117,7 @@ func NewClient(config *ClientConfig) (*Client, error) {
 	client := &Client{
 		config:          config,
 		protocolHandler: protocol.NewProtocolHandler(),
-		sessionID:       crypto.GenerateSessionID(),
+		SessionID:       crypto.GenerateSessionID(),
 		currentProtocol: config.Protocols[0],
 		protocolIndex:   0,
 		state:           StateDisconnected,
@@ -161,7 +161,7 @@ func (c *Client) Start() error {
 	c.stateMutex.Unlock()
 
 	// Create encryption session
-	err := c.protocolHandler.CreateSession(c.sessionID, crypto.AlgorithmAES)
+	err := c.protocolHandler.CreateSession(c.SessionID, crypto.AlgorithmAES)
 	if err != nil {
 		return fmt.Errorf("failed to create encryption session: %w", err)
 	}
@@ -222,7 +222,7 @@ func (c *Client) GetState() ConnectionState {
 
 // GetSessionID returns the client's session ID
 func (c *Client) GetSessionID() string {
-	return string(c.sessionID)
+	return string(c.SessionID)
 }
 
 // GetCurrentProtocol returns the client's current protocol
@@ -374,15 +374,15 @@ func (c *Client) switchToProtocol(protocol ProtocolType) error {
 func (c *Client) createConnection(protocol ProtocolType) (Connection, error) {
 	switch protocol {
 	case ProtocolTCP:
-		return NewTCPConnection(c.config.ServerAddress, c.protocolHandler, c.sessionID)
+		return NewTCPConnection(c.config.ServerAddress, c.protocolHandler, c.SessionID)
 	case ProtocolDNS:
-		return NewDNSConnection(c.config.ServerAddress, c.protocolHandler, c.sessionID)
+		return NewDNSConnection(c.config.ServerAddress, c.protocolHandler, c.SessionID)
 	case ProtocolICMP:
-		return NewICMPConnection(c.config.ServerAddress, c.protocolHandler, c.sessionID)
+		return NewICMPConnection(c.config.ServerAddress, c.protocolHandler, c.SessionID)
 	case ProtocolHTTP:
-		return NewHTTPConnection(c.config.ServerAddress, c.protocolHandler, c.sessionID)
+		return NewHTTPConnection(c.config.ServerAddress, c.protocolHandler, c.SessionID)
 	case ProtocolWebSocket:
-		return NewWebSocketConnection(c.config.ServerAddress, c.protocolHandler, c.sessionID)
+		return NewWebSocketConnection(c.config.ServerAddress, c.protocolHandler, c.SessionID)
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", protocol)
 	}
