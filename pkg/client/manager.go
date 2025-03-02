@@ -35,8 +35,14 @@ func (m *Manager) RegisterClient(client interface{}) string {
 	case *Client:
 		clientID = string(c.sessionID)
 		fmt.Printf("DEBUG: Client has sessionID: %s\n", clientID)
+	case struct {
+		Address string
+		ID      string
+	}:
+		clientID = c.ID
+		fmt.Printf("DEBUG: Simple client has ID: %s\n", clientID)
 	default:
-		// For simple client objects, generate a unique ID
+		// For unknown client objects, generate a unique ID
 		clientID = fmt.Sprintf("client-%d", time.Now().UnixNano())
 		fmt.Printf("DEBUG: Generated new clientID: %s\n", clientID)
 	}
@@ -95,8 +101,14 @@ func (m *Manager) ListClients() []map[string]interface{} {
 			clientInfo["type"] = "full_client"
 			clientInfo["address"] = c.config.ServerAddress
 			clientInfo["protocol"] = c.currentProtocol
-		default:
+		case struct {
+			Address string
+			ID      string
+		}:
 			clientInfo["type"] = "simple_client"
+			clientInfo["address"] = c.Address
+		default:
+			clientInfo["type"] = "unknown_client"
 		}
 		
 		clients = append(clients, clientInfo)

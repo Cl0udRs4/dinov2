@@ -3,36 +3,37 @@
         {
             "id": "tcp1",
             "type": "tcp",
-            "config": {
-                "address": "0.0.0.0:8080"
-            }
+            "address": "0.0.0.0",
+            "port": 8080,
+            "options": {}
         },
         {
             "id": "http1",
             "type": "http",
-            "config": {
-                "address": "0.0.0.0:8000"
-            }
+            "address": "0.0.0.0",
+            "port": 8000,
+            "options": {}
         },
         {
             "id": "ws1",
             "type": "websocket",
-            "config": {
-                "address": "0.0.0.0:8001"
-            }
+            "address": "0.0.0.0",
+            "port": 8001,
+            "options": {}
         }
     ],
     "api": {
-        "address": "127.0.0.1:8443",
+        "enabled": true,
+        "address": "127.0.0.1",
+        "port": 8443,
         "tls": false,
-        "auth": {
-            "users": [
-                {
-                    "username": "admin",
-                    "password": "testpassword",
-                    "role": "admin"
-                }
-            ]
-        }
+        "auth_enabled": true,
+        "jwt_secret": "test_secret_key",
+        "token_expiry": 60
+    },
+    "user_auth": {
+        "username": "admin",
+        "password": "testpassword",
+        "role": "admin"
     }
 }
