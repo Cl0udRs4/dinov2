@@ -487,7 +487,7 @@ import (
 func main() {
 	// Parse command line flags
 	serverAddr := flag.String("server", "", "C2 server address")
-	protocolList := flag.String("protocol", "tcp", "Comma-separated list of protocols to use (tcp,http,websocket)")
+	protocolList := flag.String("protocol", "", "Comma-separated list of protocols to use (tcp,http,websocket)")
 	flag.Parse()
 
 	if *serverAddr == "" {
@@ -496,8 +496,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Parse protocol list
-	protocols := strings.Split(*protocolList, ",")
+	// Get protocols from BuildConfig
+	protocols := []string{"http"}
+	if *protocolList != "" {
+		protocols = strings.Split(*protocolList, ",")
+	}
+	
 	if len(protocols) == 0 {
 		fmt.Println("Error: At least one valid protocol must be specified")
 		flag.Usage()
