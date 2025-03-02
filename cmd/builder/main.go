@@ -767,12 +767,22 @@ const (
 	PacketTypeModuleResponse PacketType = 7
 )
 
+// EncryptionAlgorithm represents the encryption algorithm used
+type EncryptionAlgorithm byte
+
+const (
+	EncryptionAlgorithmNone EncryptionAlgorithm = iota
+	EncryptionAlgorithmAES
+	EncryptionAlgorithmChacha20
+)
+
 // PacketHeader represents the header of a packet
 type PacketHeader struct {
-	Type       PacketType
-	TaskID     uint32
-	DataLength uint32
-	Flags      uint8
+	Version      byte
+	EncAlgorithm EncryptionAlgorithm
+	Type         PacketType
+	TaskID       uint32
+	Checksum     uint32
 }
 
 // Packet represents a communication packet
@@ -783,17 +793,13 @@ type Packet struct {
 
 // NewPacket creates a new packet
 func NewPacket(packetType PacketType, data []byte) *Packet {
-	dataLen := uint32(0)
-	if data != nil {
-		dataLen = uint32(len(data))
-	}
-	
 	return &Packet{
 		Header: PacketHeader{
-			Type:       packetType,
-			TaskID:     0,
-			DataLength: dataLen,
-			Flags:      0,
+			Version:      1,
+			EncAlgorithm: EncryptionAlgorithmNone,
+			Type:         packetType,
+			TaskID:       0,
+			Checksum:     0,
 		},
 		Data: data,
 	}
@@ -802,6 +808,39 @@ func NewPacket(packetType PacketType, data []byte) *Packet {
 // SetTaskID sets the task ID for the packet
 func (p *Packet) SetTaskID(taskID uint32) {
 	p.Header.TaskID = taskID
+}
+
+// SetEncryptionAlgorithm sets the encryption algorithm for the packet
+func (p *Packet) SetEncryptionAlgorithm(algorithm EncryptionAlgorithm) {
+	p.Header.EncAlgorithm = algorithm
+}
+
+// Encode serializes the packet into a byte slice
+func (p *Packet) Encode() []byte {
+	// Simple serialization implementation
+	result := make([]byte, 0)
+	
+	// Add header
+	result = append(result, p.Header.Version)
+	result = append(result, byte(p.Header.EncAlgorithm))
+	result = append(result, byte(p.Header.Type))
+	
+	// Add task ID (4 bytes)
+	result = append(result, byte(p.Header.TaskID>>24))
+	result = append(result, byte(p.Header.TaskID>>16))
+	result = append(result, byte(p.Header.TaskID>>8))
+	result = append(result, byte(p.Header.TaskID))
+	
+	// Add checksum (4 bytes)
+	result = append(result, byte(p.Header.Checksum>>24))
+	result = append(result, byte(p.Header.Checksum>>16))
+	result = append(result, byte(p.Header.Checksum>>8))
+	result = append(result, byte(p.Header.Checksum))
+	
+	// Add data
+	result = append(result, p.Data...)
+	
+	return result
 }
 
 // ProtocolHandler handles protocol operations
@@ -846,8 +885,16 @@ func (h *ProtocolHandler) EncryptPacket(packet *Packet) ([]byte, error) {
 		return nil, errors.New("encryptor not initialized")
 	}
 	
-	// TODO: Implement packet serialization and encryption
-	return nil, errors.New("not implemented")
+	// Encode the packet
+	encoded := packet.Encode()
+	
+	// Encrypt the encoded packet
+	encrypted, err := h.encryptor.Encrypt(encoded)
+	if err != nil {
+		return nil, err
+	}
+	
+	return encrypted, nil
 }
 
 // DecryptPacket decrypts a packet
@@ -856,8 +903,50 @@ func (h *ProtocolHandler) DecryptPacket(data []byte) (*Packet, error) {
 		return nil, errors.New("encryptor not initialized")
 	}
 	
-	// TODO: Implement packet deserialization and decryption
-	return nil, errors.New("not implemented")
+	// Decrypt the data
+	decrypted, err := h.encryptor.Decrypt(data)
+	if err != nil {
+		return nil, err
+	}
+	
+	// TODO: Implement proper deserialization
+	// This is a placeholder implementation
+	if len(decrypted) < 11 {
+		return nil, errors.New("packet too short")
+	}
+	
+	packet := &Packet{
+		Header: PacketHeader{
+			Version:      decrypted[0],
+			EncAlgorithm: EncryptionAlgorithm(decrypted[1]),
+			Type:         PacketType(decrypted[2]),
+			TaskID:       uint32(decrypted[3])<<24 | uint32(decrypted[4])<<16 | uint32(decrypted[5])<<8 | uint32(decrypted[6]),
+			Checksum:     uint32(decrypted[7])<<24 | uint32(decrypted[8])<<16 | uint32(decrypted[9])<<8 | uint32(decrypted[10]),
+		},
+		Data: decrypted[11:],
+	}
+	
+	return packet, nil
+}
+
+// DecodePacket decodes a byte slice into a packet
+func DecodePacket(data []byte) (*Packet, error) {
+	if len(data) < 11 {
+		return nil, errors.New("packet too short")
+	}
+	
+	packet := &Packet{
+		Header: PacketHeader{
+			Version:      data[0],
+			EncAlgorithm: EncryptionAlgorithm(data[1]),
+			Type:         PacketType(data[2]),
+			TaskID:       uint32(data[3])<<24 | uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6]),
+			Checksum:     uint32(data[7])<<24 | uint32(data[8])<<16 | uint32(data[9])<<8 | uint32(data[10]),
+		},
+		Data: data[11:],
+	}
+	
+	return packet, nil
 }
 `
 	

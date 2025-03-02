@@ -181,24 +181,25 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 		encAlgorithm = "chacha20"
 		cryptoAlgorithm = crypto.AlgorithmChacha20
 	default:
+		fmt.Printf("Warning: Unknown encryption algorithm %d, defaulting to AES\n", packet.Header.EncAlgorithm)
 		encAlgorithm = "aes" // Default to AES if not specified
 		cryptoAlgorithm = crypto.AlgorithmAES
 	}
 	
 	fmt.Printf("Detected encryption algorithm: %s\n", encAlgorithm)
 	
-	// Update the session with the correct encryption algorithm
-	if packet.Header.EncAlgorithm != protocol.EncryptionAlgorithmAES {
-		// Remove the existing session
-		protocolHandler.RemoveSession(sessionID)
-		
-		// Create a new session with the detected encryption algorithm
-		err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
-		if err != nil {
-			fmt.Printf("Error creating session with %s: %v\n", encAlgorithm, err)
-			return
-		}
+	// Always update the session with the detected encryption algorithm to ensure consistency
+	// Remove the existing session
+	protocolHandler.RemoveSession(sessionID)
+	
+	// Create a new session with the detected encryption algorithm
+	err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
+	if err != nil {
+		fmt.Printf("Error creating session with %s: %v\n", encAlgorithm, err)
+		return
 	}
+	
+	fmt.Printf("Successfully created session with encryption algorithm: %s\n", encAlgorithm)
 	
 	// Get the client manager from the listener manager
 	if clientManager, ok := l.config.Options["client_manager"]; ok {
