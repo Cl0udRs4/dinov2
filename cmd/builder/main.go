@@ -475,6 +475,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -504,38 +505,76 @@ func main() {
 
 	fmt.Println("Client started with configuration:")
 	fmt.Println("- Server:", *serverAddr)
-	fmt.Println("- Protocols:", *protocolList)
+	fmt.Println("- Protocols:", strings.Join(protocols, ", "))
 
-	// Connect to server
-	conn, err := net.Dial("tcp", *serverAddr)
-	if err != nil {
-		fmt.Printf("Error connecting to server: %v\n", err)
-		os.Exit(1)
-	}
-	defer conn.Close()
-
-	fmt.Println("C2 Client started. Connected to server:", *serverAddr)
-	fmt.Println("Using protocols:", *protocolList)
-
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start heartbeat
-	go func() {
-		for {
-			time.Sleep(30 * time.Second)
-			_, err := conn.Write([]byte("heartbeat"))
-			if err != nil {
-				fmt.Printf("Error sending heartbeat: %v\n", err)
-				return
-			}
+	// Connect to server based on protocol
+	if protocols[0] == "http" {
+		// For HTTP protocol
+		fmt.Println("Connecting using HTTP protocol...")
+		
+		// Make HTTP request
+		resp, err := http.Get(fmt.Sprintf("http://%s/", *serverAddr))
+		if err != nil {
+			fmt.Printf("Error connecting to HTTP server: %v\n", err)
+			os.Exit(1)
 		}
-	}()
-
-	// Wait for termination signal
-	<-sigChan
-	fmt.Println("\nShutting down client...")
+		defer resp.Body.Close()
+		
+		fmt.Println("C2 Client started. Connected to server:", *serverAddr)
+		fmt.Println("Using protocols: http")
+		
+		// Setup signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		
+		// Start heartbeat
+		go func() {
+			for {
+				time.Sleep(30 * time.Second)
+				_, err := http.Get(fmt.Sprintf("http://%s/heartbeat", *serverAddr))
+				if err != nil {
+					fmt.Printf("Error sending HTTP heartbeat: %v\n", err)
+					return
+				}
+			}
+		}()
+		
+		// Wait for termination signal
+		<-sigChan
+		fmt.Println("\nShutting down client...")
+		
+	} else {
+		// Default to TCP for other protocols
+		conn, err := net.Dial("tcp", *serverAddr)
+		if err != nil {
+			fmt.Printf("Error connecting to server: %v\n", err)
+			os.Exit(1)
+		}
+		defer conn.Close()
+		
+		fmt.Println("C2 Client started. Connected to server:", *serverAddr)
+		fmt.Println("Using protocols:", protocols[0])
+		
+		// Setup signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		
+		// Start heartbeat
+		go func() {
+			for {
+				time.Sleep(30 * time.Second)
+				_, err := conn.Write([]byte("heartbeat"))
+				if err != nil {
+					fmt.Printf("Error sending heartbeat: %v\n", err)
+					return
+				}
+			}
+		}()
+		
+		// Wait for termination signal
+		<-sigChan
+		fmt.Println("\nShutting down client...")
+	}
 	
 	fmt.Println("Client shutdown complete.")
 }`
