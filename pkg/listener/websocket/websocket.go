@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"dinoc2/pkg/client"
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
 )
@@ -208,20 +209,58 @@ func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int
 	// Generate a session ID based on the connection address
 	sessionID := crypto.SessionID(conn.RemoteAddr().String())
 	
-	// Create a session with AES encryption (default)
-	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
-	if err != nil {
-		fmt.Printf("Error creating session for WebSocket data: %v\n", err)
-		return
-	}
-	
-	// Decode the packet
+	// Decode the packet to get the encryption algorithm
 	packet, err := protocol.DecodePacket(message)
 	if err != nil {
 		fmt.Printf("Error decoding WebSocket packet data: %v\n", err)
 		// Echo the message back for invalid packets
 		conn.WriteMessage(messageType, message)
 		return
+	}
+	
+	// Determine the encryption algorithm from the packet header
+	var encAlgorithm string
+	var cryptoAlgorithm crypto.Algorithm
+	switch packet.Header.EncAlgorithm {
+	case protocol.EncryptionAlgorithmAES:
+		encAlgorithm = "aes"
+		cryptoAlgorithm = crypto.AlgorithmAES
+	case protocol.EncryptionAlgorithmChacha20:
+		encAlgorithm = "chacha20"
+		cryptoAlgorithm = crypto.AlgorithmChacha20
+	default:
+		encAlgorithm = "aes" // Default to AES if not specified
+		cryptoAlgorithm = crypto.AlgorithmAES
+	}
+	
+	fmt.Printf("Detected encryption algorithm for WebSocket connection: %s\n", encAlgorithm)
+	
+	// Create a session with the detected encryption algorithm
+	err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
+	if err != nil {
+		fmt.Printf("Error creating session for WebSocket data with %s: %v\n", encAlgorithm, err)
+		return
+	}
+	
+	// Get the client manager from the options if available
+	if l.config.Options != nil {
+		if clientManager, ok := l.config.Options["client_manager"]; ok {
+			// Create a new client with the detected encryption algorithm
+			config := client.DefaultConfig()
+			config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
+			config.EncryptionAlg = encAlgorithm
+			
+			newClient, err := client.NewClient(config)
+			if err != nil {
+				fmt.Printf("Error creating client: %v\n", err)
+			} else {
+				// Register the client with the client manager
+				if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+					clientID := cm.RegisterClient(newClient)
+					fmt.Printf("Registered WebSocket client with ID %s using %s encryption\n", clientID, encAlgorithm)
+				}
+			}
+		}
 	}
 	
 	// Handle packet based on type
