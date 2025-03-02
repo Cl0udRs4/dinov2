@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 	
+	"dinoc2/pkg/client"
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
 )
@@ -145,11 +146,120 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	// Generate a session ID based on the connection address
 	sessionID := crypto.SessionID(conn.RemoteAddr().String())
 	
-	// Create a session with AES encryption
+	// Create a session with AES encryption (default, will be updated based on client handshake)
 	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
 	if err != nil {
 		fmt.Printf("Error creating session: %v\n", err)
 		return
+	}
+	
+	// Read the first packet to determine the encryption algorithm
+	buffer := make([]byte, 4096)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		fmt.Printf("Error reading from connection: %v\n", err)
+		return
+	}
+	
+	// Decode the packet to get the encryption algorithm
+	packet, err := protocol.DecodePacket(buffer[:n])
+	if err != nil {
+		fmt.Printf("Error decoding packet: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("Received packet with encryption algorithm: %d\n", packet.Header.EncAlgorithm)
+	
+	// Determine the encryption algorithm from the packet header
+	var encAlgorithm string
+	var cryptoAlgorithm crypto.Algorithm
+	switch packet.Header.EncAlgorithm {
+	case protocol.EncryptionAlgorithmAES:
+		encAlgorithm = "aes"
+		cryptoAlgorithm = crypto.AlgorithmAES
+	case protocol.EncryptionAlgorithmChacha20:
+		encAlgorithm = "chacha20"
+		cryptoAlgorithm = crypto.AlgorithmChacha20
+	default:
+		encAlgorithm = "aes" // Default to AES if not specified
+		cryptoAlgorithm = crypto.AlgorithmAES
+	}
+	
+	fmt.Printf("Detected encryption algorithm: %s\n", encAlgorithm)
+	
+	// Update the session with the correct encryption algorithm
+	if packet.Header.EncAlgorithm != protocol.EncryptionAlgorithmAES {
+		// Remove the existing session
+		protocolHandler.RemoveSession(sessionID)
+		
+		// Create a new session with the detected encryption algorithm
+		err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
+		if err != nil {
+			fmt.Printf("Error creating session with %s: %v\n", encAlgorithm, err)
+			return
+		}
+	}
+	
+	// Get the client manager from the listener manager
+	if clientManager, ok := l.config.Options["client_manager"]; ok {
+		// Create a new client with the detected encryption algorithm
+		config := client.DefaultConfig()
+		config.ServerAddress = l.config.Address
+		config.EncryptionAlg = encAlgorithm
+		
+		newClient, err := client.NewClient(config)
+		if err != nil {
+			fmt.Printf("Error creating client: %v\n", err)
+			return
+		}
+		
+		// Set the session ID using reflection to avoid accessing unexported fields
+		// This is a temporary solution until the client package is updated
+		fmt.Printf("Created client with encryption algorithm: %s\n", encAlgorithm)
+		
+		// Register the client with the client manager
+		if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+			clientID := cm.RegisterClient(newClient)
+			fmt.Printf("Registered client with ID %s using %s encryption\n", clientID, encAlgorithm)
+			
+			// Store the client ID for later use
+			clientIDStr := clientID
+			
+			// Process the initial packet
+			processedPacket, err := protocolHandler.ProcessIncomingPacket(buffer[:n], sessionID)
+			if err != nil {
+				fmt.Printf("Error processing initial packet: %v\n", err)
+				return
+			}
+			
+			// Handle the packet based on its type
+			switch processedPacket.Header.Type {
+			case protocol.PacketTypeHeartbeat:
+				fmt.Printf("Received heartbeat from client %s\n", clientIDStr)
+				// Send heartbeat response
+				heartbeatResponse := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("heartbeat-response"))
+				responseData, err := protocolHandler.PrepareOutgoingPacket(heartbeatResponse, sessionID, true)
+				if err != nil {
+					fmt.Printf("Error preparing heartbeat response: %v\n", err)
+					return
+				}
+				
+				// Send the response
+				for _, fragment := range responseData {
+					_, err = conn.Write(fragment)
+					if err != nil {
+						fmt.Printf("Error sending heartbeat response: %v\n", err)
+						return
+					}
+				}
+			default:
+				fmt.Printf("Received packet of type %d from client %s\n", processedPacket.Header.Type, clientIDStr)
+			}
+		} else {
+			fmt.Printf("Client manager does not implement RegisterClient method\n")
+		}
+	} else {
+		fmt.Printf("Client manager not found in listener options\n")
 	}
 
 	// Handle communication loop

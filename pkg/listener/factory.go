@@ -23,6 +23,11 @@ const (
 
 // CreateListener creates a new listener of the specified type
 func CreateListener(listenerType ListenerType, config ListenerConfig) (Listener, error) {
+	// Pass client manager to the listener if available
+	if config.Options == nil {
+		config.Options = make(map[string]interface{})
+	}
+	
 	switch listenerType {
 	case ListenerTypeTCP:
 		return NewTCPListener(config), nil

@@ -51,15 +51,17 @@ type Manager struct {
 	stats        map[string]*ListenerStats
 	mutex        sync.RWMutex
 	monitorStop  chan struct{}
+	clientManager interface{} // Client manager for registering clients
 }
 
 // NewManager creates a new listener manager
-func NewManager() *Manager {
+func NewManager(clientManager interface{}) *Manager {
 	manager := &Manager{
 		listeners:    make(map[string]Listener),
 		listenerType: make(map[string]ListenerType),
 		stats:        make(map[string]*ListenerStats),
 		monitorStop:  make(chan struct{}),
+		clientManager: clientManager,
 	}
 	
 	// Start the health monitor
@@ -74,6 +76,12 @@ func (m *Manager) CreateListener(id string, listenerType ListenerType, config Li
 	if err := ValidateListenerConfig(listenerType, config); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
+	
+	// Add client manager to the listener options
+	if config.Options == nil {
+		config.Options = make(map[string]interface{})
+	}
+	config.Options["client_manager"] = m.clientManager
 	
 	// Create the listener
 	listener, err := CreateListener(listenerType, config)
