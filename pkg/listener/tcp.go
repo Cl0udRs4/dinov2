@@ -143,8 +143,8 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	// Create a simple protocol handler for this connection
 	protocolHandler := protocol.NewProtocolHandler()
 	
-	// Generate a session ID based on the connection address
-	sessionID := crypto.SessionID(conn.RemoteAddr().String())
+		// Generate a unique session ID
+		sessionID := crypto.GenerateSessionID()
 	
 	// Create a session with AES encryption (default, will be updated based on client handshake)
 	err := protocolHandler.CreateSession(sessionID, crypto.AlgorithmAES)
