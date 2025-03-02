@@ -144,7 +144,7 @@ func connect(protocol, address string) error {
 		return err
 	}
 	
-	// Send the packet directly without length prefix for the initial key exchange
+	// Send the packet directly without fragment header for the initial key exchange
 	_, err = conn.Write(encryptedPacket)
 	if err != nil {
 		log.Printf("Failed to send message: %v", err)
@@ -192,10 +192,10 @@ func connect(protocol, address string) error {
 	// Process response data
 	responseData := responseBuffer[:totalBytes]
 	log.Printf("Received %d bytes response from server", len(responseData))
-	if err != nil {
-		log.Printf("Failed to read response data: %v", err)
-		conn.Close()
-		return err
+	
+	// Process the response data directly
+	if totalBytes > 0 {
+		log.Printf("Processing response data")
 	}
 	
 	log.Printf("Received response from server")
