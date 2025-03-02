@@ -6,13 +6,6 @@ import (
 	"sync"
 	"time"
 )
-package client
-
-import (
-	"errors"
-	"fmt"
-	"sync"
-)
 
 // Manager handles client connections and management
 type Manager struct {
@@ -33,24 +26,20 @@ func (m *Manager) RegisterClient(client interface{}) string {
 	m.clientMutex.Lock()
 	defer m.clientMutex.Unlock()
 	
-	fmt.Printf("DEBUG: RegisterClient called with client: %+v\n", client)
+	fmt.Printf("DEBUG: RegisterClient called with client type: %T\n", client)
 	
 	var clientID string
 	
 	// Try to get client ID based on type
 	switch c := client.(type) {
 	case *Client:
-		clientID = c.GetSessionID()
-	case struct {
-		Address string
-		ID      string
-	}:
-		clientID = c.ID
+		clientID = string(c.sessionID)
+		fmt.Printf("DEBUG: Client has sessionID: %s\n", clientID)
 	default:
-		clientID = fmt.Sprintf("unknown-%d", time.Now().UnixNano())
+		// For simple client objects, generate a unique ID
+		clientID = fmt.Sprintf("client-%d", time.Now().UnixNano())
+		fmt.Printf("DEBUG: Generated new clientID: %s\n", clientID)
 	}
-	
-	fmt.Printf("DEBUG: Using clientID: %s\n", clientID)
 	
 	m.clients[clientID] = client
 	fmt.Printf("DEBUG: Client registered, total clients: %d\n", len(m.clients))
@@ -85,22 +74,32 @@ func (m *Manager) GetClient(clientID string) (interface{}, error) {
 }
 
 // ListClients returns a list of all connected clients
-func (m *Manager) ListClients() []*Client {
+func (m *Manager) ListClients() []map[string]interface{} {
 	m.clientMutex.RLock()
 	defer m.clientMutex.RUnlock()
 	
 	fmt.Printf("DEBUG: ListClients called, number of clients: %d\n", len(m.clients))
-	for id, _ := range m.clients {
+	for id := range m.clients {
 		fmt.Printf("DEBUG: Client ID: %s\n", id)
 	}
 	
-	clients := make([]*Client, 0)
-	for _, client := range m.clients {
-		if c, ok := client.(*Client); ok {
-			clients = append(clients, c)
-		} else {
-			fmt.Printf("DEBUG: Client is not of type *Client: %T\n", client)
+	clients := make([]map[string]interface{}, 0, len(m.clients))
+	for id, client := range m.clients {
+		clientInfo := map[string]interface{}{
+			"id": id,
 		}
+		
+		// Add additional info based on client type
+		switch c := client.(type) {
+		case *Client:
+			clientInfo["type"] = "full_client"
+			clientInfo["address"] = c.config.ServerAddress
+			clientInfo["protocol"] = c.currentProtocol
+		default:
+			clientInfo["type"] = "simple_client"
+		}
+		
+		clients = append(clients, clientInfo)
 	}
 	
 	return clients

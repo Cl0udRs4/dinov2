@@ -2,67 +2,64 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
-// handleListClients handles GET /api/clients
-func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+// ClientHandler handles client-related API endpoints
+type ClientHandler struct {
+	clientManager interface {
+		ListClients() []map[string]interface{}
+		GetClient(string) (interface{}, error)
+		UnregisterClient(string) error
 	}
+}
+
+// NewClientHandler creates a new client handler
+func NewClientHandler(clientManager interface{}) *ClientHandler {
+	return &ClientHandler{
+		clientManager: clientManager,
+	}
+}
+
+// GetClients returns a list of all clients
+func (h *ClientHandler) GetClients(c *gin.Context) {
+	clients := h.clientManager.ListClients()
+	c.JSON(http.StatusOK, gin.H{
+		"clients": clients,
+	})
+}
+
+// GetClient returns a specific client
+func (h *ClientHandler) GetClient(c *gin.Context) {
+	clientID := c.Param("id")
 	
-	// Get clients from client manager
-	clients := r.clientManager.ListClients()
-	
-	// Convert to client info for response
-	clientInfos := make([]map[string]interface{}, 0, len(clients))
-	for _, client := range clients {
-		clientInfos = append(clientInfos, map[string]interface{}{
-			"id":                 client.GetSessionID(),
-			"protocol":           client.GetCurrentProtocol(),
-			"state":              getStateString(int(client.GetState())),
-			"encryption_algorithm": client.GetEncryptionAlgorithm(),
-			"last_heartbeat":     client.GetLastHeartbeat().Format("2006-01-02 15:04:05"),
+	client, err := h.clientManager.GetClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Client not found",
 		})
-	}
-	
-	writeJSON(w, map[string]interface{}{
-		"status":  "success",
-		"clients": clientInfos,
-	}, http.StatusOK)
-}
-
-// getStateString converts a ConnectionState to a string
-func getStateString(state int) string {
-	switch state {
-	case 0:
-		return "disconnected"
-	case 1:
-		return "connecting"
-	case 2:
-		return "connected"
-	case 3:
-		return "reconnecting"
-	case 4:
-		return "switching_protocol"
-	default:
-		return "unknown"
-	}
-}
-
-// handleClientTasks handles GET /api/clients/tasks
-func (r *Router) handleClientTasks(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	
-	clientID := req.URL.Query().Get("client_id")
-	if clientID == "" {
-		writeError(w, "Client ID is required", http.StatusBadRequest)
+	c.JSON(http.StatusOK, gin.H{
+		"client": client,
+	})
+}
+
+// DeleteClient removes a client
+func (h *ClientHandler) DeleteClient(c *gin.Context) {
+	clientID := c.Param("id")
+	
+	err := h.clientManager.UnregisterClient(clientID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Client not found",
+		})
 		return
 	}
 	
-	tasks := r.taskManager.ListClientTasks(clientID)
-	writeJSON(w, tasks, http.StatusOK)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Client deleted",
+	})
 }

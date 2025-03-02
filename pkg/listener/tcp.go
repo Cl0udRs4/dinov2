@@ -33,6 +33,7 @@ func NewTCPListener(config map[string]interface{}) (*TCPListener, error) {
 // SetClientManager sets the client manager for the listener
 func (l *TCPListener) SetClientManager(cm interface{}) {
 	l.clientManager = cm
+	fmt.Printf("DEBUG: TCP listener client manager set: %T\n", cm)
 }
 
 // Start starts the TCP listener
