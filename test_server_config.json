@@ -3,17 +3,23 @@
         {
             "id": "tcp1",
             "type": "tcp",
-            "address": "0.0.0.0:8080"
+            "config": {
+                "address": "0.0.0.0:8080"
+            }
         },
         {
             "id": "http1",
             "type": "http",
-            "address": "0.0.0.0:8000"
+            "config": {
+                "address": "0.0.0.0:8000"
+            }
         },
         {
             "id": "ws1",
             "type": "websocket",
-            "address": "0.0.0.0:8001"
+            "config": {
+                "address": "0.0.0.0:8001"
+            }
         }
     ],
     "api": {

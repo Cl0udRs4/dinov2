@@ -14,6 +14,7 @@ type Manager struct {
 
 // NewManager creates a new client manager
 func NewManager() *Manager {
+	fmt.Println("DEBUG: Creating new client manager")
 	return &Manager{
 		clients: make(map[string]*Client),
 	}
@@ -24,10 +25,14 @@ func (m *Manager) RegisterClient(client *Client) string {
 	m.clientMutex.Lock()
 	defer m.clientMutex.Unlock()
 	
-	// Use GetSessionID() method instead of directly accessing sessionID field
+	fmt.Printf("DEBUG: RegisterClient called with client: %+v\n", client)
+	
+	// Use GetSessionID() method instead of directly accessing SessionID field
 	clientID := client.GetSessionID()
+	fmt.Printf("DEBUG: Using clientID: %s\n", clientID)
 	
 	m.clients[clientID] = client
+	fmt.Printf("DEBUG: Client registered, total clients: %d\n", len(m.clients))
 	
 	return clientID
 }
@@ -62,6 +67,11 @@ func (m *Manager) GetClient(clientID string) (*Client, error) {
 func (m *Manager) ListClients() []*Client {
 	m.clientMutex.RLock()
 	defer m.clientMutex.RUnlock()
+	
+	fmt.Printf("DEBUG: ListClients called, number of clients: %d\n", len(m.clients))
+	for id, _ := range m.clients {
+		fmt.Printf("DEBUG: Client ID: %s\n", id)
+	}
 	
 	clients := make([]*Client, 0, len(m.clients))
 	for _, client := range m.clients {
