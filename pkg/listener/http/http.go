@@ -190,8 +190,11 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 	// Register client with the client manager
 	clientID := r.RemoteAddr
 	if clientManager := GetClientManager(); clientManager != nil {
+		fmt.Printf("Registering HTTP client: %s\n", clientID)
 		clientManager.RegisterClient(clientID, r.RemoteAddr, "http")
-		defer clientManager.UnregisterClient(clientID)
+		// Don't unregister the client immediately after the request completes
+		// This allows the client to be visible in the API response
+		// defer clientManager.UnregisterClient(clientID)
 	}
 	
 	// Check if this is an API request
