@@ -51,6 +51,7 @@ func main() {
 
 	// Initialize encryption
 	var err error
+	
 	if BuildConfig.EncryptionAlg == "aes" {
 		encryptor, err = crypto.NewAESEncryptor()
 	} else if BuildConfig.EncryptionAlg == "chacha20" {
@@ -119,6 +120,13 @@ func connect(protocol, address string) error {
 	// Implementation would connect using the specified protocol
 	log.Printf("Connecting to %s using protocol %s", address, protocol)
 	
+	// Create a key exchange packet
+	keyExchangePacket := createPacket(5, []byte(string(sessionID))) // 5 = PacketTypeKeyExchange
+	
+	// Encrypt and send the packet
+	// This is a placeholder for the actual implementation
+	_, _ = encryptPacket(keyExchangePacket) // Prevent unused variable warning
+	
 	// Simulate connection
 	time.Sleep(500 * time.Millisecond)
 	
@@ -126,7 +134,8 @@ func connect(protocol, address string) error {
 	isConnected = true
 	lastHeartbeat = time.Now()
 	
-	log.Printf("Connected to server: %s using protocol: %s", address, protocol)
+	log.Printf("Connected to server: %s using protocol: %s with encryption: %s", 
+		address, protocol, BuildConfig.EncryptionAlg)
 	return nil
 }
 
@@ -155,8 +164,12 @@ func sendHeartbeats() {
 			continue
 		}
 		
-		// Send heartbeat
-		log.Println("Sending heartbeat")
+	// Create and send heartbeat packet
+	heartbeatPacket := createPacket(0, []byte("heartbeat")) // 0 = PacketTypeHeartbeat
+	
+	// Implementation would encrypt and send the packet
+	_, _ = encryptPacket(heartbeatPacket) // Prevent unused variable warning
+	log.Println("Sending heartbeat with encryption algorithm:", BuildConfig.EncryptionAlg)
 		
 		// Update last heartbeat time
 		lastHeartbeat = time.Now()
@@ -203,5 +216,35 @@ func monitorConnection(protocols []string) {
 			connMutex.Unlock()
 		}
 	}
+}
+
+// createPacket creates a new packet with the specified type and data
+func createPacket(packetType uint8, data []byte) *protocol.Packet {
+	packet := protocol.NewPacket(protocol.PacketType(packetType), data)
+	
+	// Set encryption algorithm based on BuildConfig
+	var encAlg protocol.EncryptionAlgorithm
+	if BuildConfig.EncryptionAlg == "aes" {
+		encAlg = protocol.EncryptionAlgorithmAES
+	} else if BuildConfig.EncryptionAlg == "chacha20" {
+		encAlg = protocol.EncryptionAlgorithmChacha20
+	}
+	
+	packet.SetEncryptionAlgorithm(encAlg)
+	return packet
+}
+
+// encryptPacket encrypts a packet using the current encryptor
+func encryptPacket(packet *protocol.Packet) ([]byte, error) {
+	// Encode the packet
+	encoded := packet.Encode()
+	
+	// Encrypt the encoded packet
+	encrypted, err := encryptor.Encrypt(encoded)
+	if err != nil {
+		return nil, err
+	}
+	
+	return encrypted, nil
 }
 `

@@ -43,7 +43,7 @@ func NewServer() *Server {
 	}
 
 	return &Server{
-		listenerManager: listener.NewManager(),
+		listenerManager: listener.NewManager(nil), // Pass nil as clientManager for now
 		moduleManager:   moduleManager,
 	}
 }

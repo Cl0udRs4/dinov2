@@ -119,6 +119,12 @@ func (h *ProtocolHandler) encryptPacket(packet *Packet, sessionID crypto.Session
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 	
+	// Get the encryption algorithm
+	algorithm := getEncryptionAlgorithm(session.Encryptor.Algorithm())
+	if algorithm == EncryptionAlgorithmNone {
+		return nil, fmt.Errorf("invalid encryption algorithm detected")
+	}
+	
 	// Encrypt the data
 	encryptedData, err := session.Encryptor.Encrypt(packet.Data)
 	if err != nil {
@@ -129,7 +135,7 @@ func (h *ProtocolHandler) encryptPacket(packet *Packet, sessionID crypto.Session
 	encryptedPacket := &Packet{
 		Header: PacketHeader{
 			Version:      packet.Header.Version,
-			EncAlgorithm: getEncryptionAlgorithm(session.Encryptor.Algorithm()),
+			EncAlgorithm: algorithm,
 			Type:         packet.Header.Type,
 			TaskID:       packet.Header.TaskID,
 			Checksum:     0, // Will be calculated during encoding
