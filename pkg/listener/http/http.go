@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -116,7 +117,7 @@ func (l *HTTPListener) Start() error {
 			l.statusLock.Lock()
 			l.status = "error"
 			l.statusLock.Unlock()
-			fmt.Printf("Error starting HTTP listener: %v\n", err)
+			log.Printf("[HTTP] Error starting HTTP listener: %v\n", err)
 		}
 	}()
 	
@@ -185,13 +186,16 @@ func (l *HTTPListener) RegisterHandler(path string, handler http.HandlerFunc) {
 
 // defaultHandler is the default HTTP handler
 func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
+	log.Printf("[HTTP] Received HTTP request from %s: %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 	
 	// Check if this is an API request
 	if strings.HasPrefix(r.URL.Path, "/api/") {
+		log.Printf("[HTTP] Processing API request from %s: %s\n", r.RemoteAddr, r.URL.Path)
 		if l.apiHandler != nil {
 			l.apiHandler.ServeHTTP(w, r)
 			return
+		} else {
+			log.Printf("[HTTP] No API handler registered for request from %s\n", r.RemoteAddr)
 		}
 	}
 	
@@ -217,10 +221,11 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 		// Decode the packet to get the encryption algorithm
 		packet, err := protocol.DecodePacket(body)
 		if err != nil {
-			fmt.Printf("Error decoding HTTP packet data: %v\n", err)
+			log.Printf("[HTTP] Error decoding HTTP packet data from %s: %v\n", r.RemoteAddr, err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
+		log.Printf("[HTTP] Successfully decoded packet of type %d from %s\n", packet.Header.Type, r.RemoteAddr)
 		
 		// Determine the encryption algorithm from the packet header
 		var encAlgorithm string
@@ -233,39 +238,70 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 			encAlgorithm = "chacha20"
 			cryptoAlgorithm = crypto.AlgorithmChacha20
 		default:
+			log.Printf("[HTTP] Warning: Unknown encryption algorithm %d from %s, defaulting to AES\n", 
+				packet.Header.EncAlgorithm, r.RemoteAddr)
 			encAlgorithm = "aes" // Default to AES if not specified
 			cryptoAlgorithm = crypto.AlgorithmAES
 		}
 		
-		fmt.Printf("Detected encryption algorithm for HTTP request: %s\n", encAlgorithm)
+		log.Printf("[HTTP] Detected encryption algorithm: %s from %s\n", encAlgorithm, r.RemoteAddr)
 		
 		// Create a session with the detected encryption algorithm
 		err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
 		if err != nil {
-			fmt.Printf("Error creating session for HTTP data with %s: %v\n", encAlgorithm, err)
+			log.Printf("[HTTP] Error creating session for HTTP data with %s for %s: %v\n", 
+				encAlgorithm, r.RemoteAddr, err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		log.Printf("[HTTP] Successfully created session with encryption algorithm: %s for %s\n", 
+			encAlgorithm, r.RemoteAddr)
 		
 		// Get the client manager from the options if available
 		if l.config.Options != nil {
 			if clientManager, ok := l.config.Options["client_manager"]; ok {
-				// Create a new client with the detected encryption algorithm
-				config := client.DefaultConfig()
-				config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
-				config.EncryptionAlg = encAlgorithm
+				log.Printf("[HTTP] Retrieved client manager from listener options for %s\n", r.RemoteAddr)
 				
-				newClient, err := client.NewClient(config)
-				if err != nil {
-					fmt.Printf("Error creating client: %v\n", err)
+				// Check if client manager is nil
+				if clientManager == nil {
+					log.Printf("[HTTP] Error: Client manager is nil for %s\n", r.RemoteAddr)
 				} else {
-					// Register the client with the client manager
-					if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
-						clientID := cm.RegisterClient(newClient)
-						fmt.Printf("Registered HTTP client with ID %s using %s encryption\n", clientID, encAlgorithm)
+					// Create a new client with the detected encryption algorithm
+					config := client.DefaultConfig()
+					config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
+					config.EncryptionAlg = encAlgorithm
+					config.RemoteAddress = r.RemoteAddr
+					
+					log.Printf("[HTTP] Creating new client with server address %s and encryption %s for %s\n", 
+						config.ServerAddress, encAlgorithm, r.RemoteAddr)
+					newClient, err := client.NewClient(config)
+					if err != nil {
+						log.Printf("[HTTP] Error creating client for %s: %v\n", r.RemoteAddr, err)
+					} else {
+						// Set the session ID for the client
+						newClient.SetSessionID(string(sessionID))
+						log.Printf("[HTTP] Created client with encryption algorithm: %s and session ID: %s for %s\n", 
+							encAlgorithm, sessionID, r.RemoteAddr)
+						
+						// Register the client with the client manager
+						if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+							clientID := cm.RegisterClient(newClient)
+							if clientID == "" {
+								log.Printf("[HTTP] Error: Failed to register client for %s (empty client ID returned)\n", r.RemoteAddr)
+							} else {
+								log.Printf("[HTTP] Successfully registered client with ID %s using %s encryption for %s\n", 
+									clientID, encAlgorithm, r.RemoteAddr)
+							}
+						} else {
+							log.Printf("[HTTP] Error: Client manager does not implement RegisterClient method for %s\n", r.RemoteAddr)
+						}
 					}
 				}
+			} else {
+				log.Printf("[HTTP] Error: Client manager not found in listener options for %s\n", r.RemoteAddr)
 			}
+		} else {
+			log.Printf("[HTTP] Error: No options configured for HTTP listener for %s\n", r.RemoteAddr)
 		}
 		
 		// Handle packet based on type
@@ -273,25 +309,29 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 		
 		switch packet.Header.Type {
 		case protocol.PacketTypeKeyExchange:
-			fmt.Printf("Received key exchange from %s via HTTP\n", r.RemoteAddr)
+			log.Printf("[HTTP] Received key exchange from %s\n", r.RemoteAddr)
 			// Create a response packet with the same session ID
 			responsePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
 			responseData = protocol.EncodePacket(responsePacket)
+			log.Printf("[HTTP] Created key exchange response for %s\n", r.RemoteAddr)
 			
 		case protocol.PacketTypeHeartbeat:
-			fmt.Printf("Received heartbeat from %s via HTTP\n", r.RemoteAddr)
+			log.Printf("[HTTP] Received heartbeat from %s\n", r.RemoteAddr)
 			// Create a heartbeat response
 			responsePacket := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
 			responseData = protocol.EncodePacket(responsePacket)
+			log.Printf("[HTTP] Created heartbeat response for %s\n", r.RemoteAddr)
 			
 		default:
-			fmt.Printf("Received packet type %d from %s via HTTP\n", packet.Header.Type, r.RemoteAddr)
+			log.Printf("[HTTP] Received packet type %d from %s\n", packet.Header.Type, r.RemoteAddr)
 			// Echo back the packet for other types
 			responseData = protocol.EncodePacket(packet)
+			log.Printf("[HTTP] Created echo response for packet type %d for %s\n", packet.Header.Type, r.RemoteAddr)
 		}
 		
 		// Clean up
 		protocolHandler.RemoveSession(sessionID)
+		log.Printf("[HTTP] Cleaned up session for %s\n", r.RemoteAddr)
 		
 		// Send the response
 		w.WriteHeader(http.StatusOK)

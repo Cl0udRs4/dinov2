@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	
+	"dinoc2/pkg/client"
 	"dinoc2/pkg/listener"
 	"dinoc2/pkg/module/loader"
 	"dinoc2/pkg/module/manager"
@@ -31,6 +32,7 @@ type Server struct {
 	config          ServerConfig
 	listenerManager *listener.Manager
 	moduleManager   *manager.ModuleManager
+	clientManager   *client.Manager
 }
 
 // NewServer creates a new C2 server
@@ -42,9 +44,13 @@ func NewServer() *Server {
 		moduleManager = nil
 	}
 
+	// Initialize client manager
+	clientManager := client.NewManager()
+	
 	return &Server{
-		listenerManager: listener.NewManager(nil), // Pass nil as clientManager for now
+		listenerManager: listener.NewManager(clientManager),
 		moduleManager:   moduleManager,
+		clientManager:   clientManager,
 	}
 }
 

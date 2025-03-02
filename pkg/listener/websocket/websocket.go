@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 
@@ -90,7 +91,7 @@ func (l *WebSocketListener) Start() error {
 			l.statusLock.Lock()
 			l.status = "error"
 			l.statusLock.Unlock()
-			fmt.Printf("Error starting WebSocket listener: %v\n", err)
+			log.Printf("[WebSocket] Error starting WebSocket listener: %v\n", err)
 		}
 	}()
 	
@@ -155,17 +156,21 @@ func (l *WebSocketListener) Configure(config interface{}) error {
 
 // handleWebSocket handles WebSocket connections
 func (l *WebSocketListener) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[WebSocket] New connection request from %s\n", r.RemoteAddr)
+	
 	// Upgrade the HTTP connection to a WebSocket connection
 	conn, err := l.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Printf("Error upgrading to WebSocket: %v\n", err)
+		log.Printf("[WebSocket] Error upgrading to WebSocket for %s: %v\n", r.RemoteAddr, err)
 		return
 	}
+	log.Printf("[WebSocket] Successfully upgraded connection to WebSocket for %s\n", conn.RemoteAddr())
 	
 	// Register the client
 	l.clientLock.Lock()
 	l.clients[conn] = true
 	l.clientLock.Unlock()
+	log.Printf("[WebSocket] Registered WebSocket connection for %s\n", conn.RemoteAddr())
 	
 	// Handle the connection in a goroutine
 	go l.handleConnection(conn)
@@ -173,26 +178,35 @@ func (l *WebSocketListener) handleWebSocket(w http.ResponseWriter, r *http.Reque
 
 // handleConnection processes a WebSocket connection
 func (l *WebSocketListener) handleConnection(conn *websocket.Conn) {
+	log.Printf("[WebSocket] Starting to handle connection from %s\n", conn.RemoteAddr())
+	
 	defer func() {
 		// Unregister the client when the function returns
 		l.clientLock.Lock()
 		delete(l.clients, conn)
 		l.clientLock.Unlock()
+		log.Printf("[WebSocket] Unregistered WebSocket connection for %s\n", conn.RemoteAddr())
 		
 		// Close the connection
 		conn.Close()
+		log.Printf("[WebSocket] Closed WebSocket connection for %s\n", conn.RemoteAddr())
 	}()
 	
 	for {
 		// Read message from the client
+		log.Printf("[WebSocket] Waiting for message from %s\n", conn.RemoteAddr())
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
 			// Check if it's a normal close
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Printf("WebSocket error: %v\n", err)
+				log.Printf("[WebSocket] Unexpected error for %s: %v\n", conn.RemoteAddr(), err)
+			} else {
+				log.Printf("[WebSocket] Connection closed for %s: %v\n", conn.RemoteAddr(), err)
 			}
 			break
 		}
+		log.Printf("[WebSocket] Received message of type %d with %d bytes from %s\n", 
+			messageType, len(message), conn.RemoteAddr())
 		
 		// Process the message
 		go l.processMessage(conn, messageType, message)
@@ -201,22 +215,24 @@ func (l *WebSocketListener) handleConnection(conn *websocket.Conn) {
 
 // processMessage processes a WebSocket message
 func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int, message []byte) {
-	fmt.Printf("Received WebSocket message from %s\n", conn.RemoteAddr())
+	log.Printf("[WebSocket] Processing message from %s\n", conn.RemoteAddr())
 	
 	// Create a protocol handler for processing the data
 	protocolHandler := protocol.NewProtocolHandler()
 	
 	// Generate a session ID based on the connection address
 	sessionID := crypto.SessionID(conn.RemoteAddr().String())
+	log.Printf("[WebSocket] Generated session ID: %s for connection from %s\n", sessionID, conn.RemoteAddr())
 	
 	// Decode the packet to get the encryption algorithm
 	packet, err := protocol.DecodePacket(message)
 	if err != nil {
-		fmt.Printf("Error decoding WebSocket packet data: %v\n", err)
+		log.Printf("[WebSocket] Error decoding WebSocket packet data from %s: %v\n", conn.RemoteAddr(), err)
 		// Echo the message back for invalid packets
 		conn.WriteMessage(messageType, message)
 		return
 	}
+	log.Printf("[WebSocket] Successfully decoded packet of type %d from %s\n", packet.Header.Type, conn.RemoteAddr())
 	
 	// Determine the encryption algorithm from the packet header
 	var encAlgorithm string
@@ -229,38 +245,69 @@ func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int
 		encAlgorithm = "chacha20"
 		cryptoAlgorithm = crypto.AlgorithmChacha20
 	default:
+		log.Printf("[WebSocket] Warning: Unknown encryption algorithm %d from %s, defaulting to AES\n", 
+			packet.Header.EncAlgorithm, conn.RemoteAddr())
 		encAlgorithm = "aes" // Default to AES if not specified
 		cryptoAlgorithm = crypto.AlgorithmAES
 	}
 	
-	fmt.Printf("Detected encryption algorithm for WebSocket connection: %s\n", encAlgorithm)
+	log.Printf("[WebSocket] Detected encryption algorithm: %s from %s\n", encAlgorithm, conn.RemoteAddr())
 	
 	// Create a session with the detected encryption algorithm
 	err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
 	if err != nil {
-		fmt.Printf("Error creating session for WebSocket data with %s: %v\n", encAlgorithm, err)
+		log.Printf("[WebSocket] Error creating session for WebSocket data with %s for %s: %v\n", 
+			encAlgorithm, conn.RemoteAddr(), err)
 		return
 	}
+	log.Printf("[WebSocket] Successfully created session with encryption algorithm: %s for %s\n", 
+		encAlgorithm, conn.RemoteAddr())
 	
 	// Get the client manager from the options if available
 	if l.config.Options != nil {
 		if clientManager, ok := l.config.Options["client_manager"]; ok {
-			// Create a new client with the detected encryption algorithm
-			config := client.DefaultConfig()
-			config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
-			config.EncryptionAlg = encAlgorithm
+			log.Printf("[WebSocket] Retrieved client manager from listener options for %s\n", conn.RemoteAddr())
 			
-			newClient, err := client.NewClient(config)
-			if err != nil {
-				fmt.Printf("Error creating client: %v\n", err)
+			// Check if client manager is nil
+			if clientManager == nil {
+				log.Printf("[WebSocket] Error: Client manager is nil for %s\n", conn.RemoteAddr())
 			} else {
-				// Register the client with the client manager
-				if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
-					clientID := cm.RegisterClient(newClient)
-					fmt.Printf("Registered WebSocket client with ID %s using %s encryption\n", clientID, encAlgorithm)
+				// Create a new client with the detected encryption algorithm
+				config := client.DefaultConfig()
+				config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
+				config.EncryptionAlg = encAlgorithm
+				config.RemoteAddress = conn.RemoteAddr().String()
+				
+				log.Printf("[WebSocket] Creating new client with server address %s and encryption %s for %s\n", 
+					config.ServerAddress, encAlgorithm, conn.RemoteAddr())
+				newClient, err := client.NewClient(config)
+				if err != nil {
+					log.Printf("[WebSocket] Error creating client for %s: %v\n", conn.RemoteAddr(), err)
+				} else {
+					// Set the session ID for the client
+					newClient.SetSessionID(string(sessionID))
+					log.Printf("[WebSocket] Created client with encryption algorithm: %s and session ID: %s for %s\n", 
+						encAlgorithm, sessionID, conn.RemoteAddr())
+					
+					// Register the client with the client manager
+					if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
+						clientID := cm.RegisterClient(newClient)
+						if clientID == "" {
+							log.Printf("[WebSocket] Error: Failed to register client for %s (empty client ID returned)\n", conn.RemoteAddr())
+						} else {
+							log.Printf("[WebSocket] Successfully registered client with ID %s using %s encryption for %s\n", 
+								clientID, encAlgorithm, conn.RemoteAddr())
+						}
+					} else {
+						log.Printf("[WebSocket] Error: Client manager does not implement RegisterClient method for %s\n", conn.RemoteAddr())
+					}
 				}
 			}
+		} else {
+			log.Printf("[WebSocket] Error: Client manager not found in listener options for %s\n", conn.RemoteAddr())
 		}
+	} else {
+		log.Printf("[WebSocket] Error: No options configured for WebSocket listener for %s\n", conn.RemoteAddr())
 	}
 	
 	// Handle packet based on type
@@ -268,30 +315,36 @@ func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int
 	
 	switch packet.Header.Type {
 	case protocol.PacketTypeKeyExchange:
-		fmt.Printf("Received key exchange from %s via WebSocket\n", conn.RemoteAddr())
+		log.Printf("[WebSocket] Received key exchange from %s\n", conn.RemoteAddr())
 		// Create a response packet with the same session ID
 		responsePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
 		responseData = protocol.EncodePacket(responsePacket)
+		log.Printf("[WebSocket] Created key exchange response for %s\n", conn.RemoteAddr())
 		
 	case protocol.PacketTypeHeartbeat:
-		fmt.Printf("Received heartbeat from %s via WebSocket\n", conn.RemoteAddr())
+		log.Printf("[WebSocket] Received heartbeat from %s\n", conn.RemoteAddr())
 		// Create a heartbeat response
 		responsePacket := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
 		responseData = protocol.EncodePacket(responsePacket)
+		log.Printf("[WebSocket] Created heartbeat response for %s\n", conn.RemoteAddr())
 		
 	default:
-		fmt.Printf("Received packet type %d from %s via WebSocket\n", packet.Header.Type, conn.RemoteAddr())
+		log.Printf("[WebSocket] Received packet type %d from %s\n", packet.Header.Type, conn.RemoteAddr())
 		// Echo back the packet for other types
 		responseData = protocol.EncodePacket(packet)
+		log.Printf("[WebSocket] Created echo response for packet type %d for %s\n", packet.Header.Type, conn.RemoteAddr())
 	}
 	
 	// Clean up
 	protocolHandler.RemoveSession(sessionID)
+	log.Printf("[WebSocket] Cleaned up session for %s\n", conn.RemoteAddr())
 	
 	// Send the response
 	err = conn.WriteMessage(messageType, responseData)
 	if err != nil {
-		fmt.Printf("Error writing WebSocket message: %v\n", err)
+		log.Printf("[WebSocket] Error writing WebSocket message to %s: %v\n", conn.RemoteAddr(), err)
+	} else {
+		log.Printf("[WebSocket] Successfully sent response to %s\n", conn.RemoteAddr())
 	}
 }
 
@@ -300,11 +353,16 @@ func (l *WebSocketListener) Broadcast(message []byte) {
 	l.clientLock.RLock()
 	defer l.clientLock.RUnlock()
 	
+	log.Printf("[WebSocket] Broadcasting message of %d bytes to %d clients\n", len(message), len(l.clients))
+	
 	for client := range l.clients {
 		err := client.WriteMessage(websocket.TextMessage, message)
 		if err != nil {
-			fmt.Printf("Error broadcasting to client: %v\n", err)
+			log.Printf("[WebSocket] Error broadcasting to client %s: %v\n", client.RemoteAddr(), err)
 			client.Close()
+			log.Printf("[WebSocket] Closed connection to client %s due to broadcast error\n", client.RemoteAddr())
+		} else {
+			log.Printf("[WebSocket] Successfully sent broadcast message to client %s\n", client.RemoteAddr())
 		}
 	}
 }
