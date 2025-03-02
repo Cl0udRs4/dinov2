@@ -62,8 +62,9 @@ var serverState *serverImpl
 func NewServer() *Server {
 	// Initialize the server state if it doesn't exist
 	if serverState == nil {
+		// Initialize with nil client manager, will be replaced in Start()
 		serverState = &serverImpl{
-			listenerManager: listener.NewManager(),
+			listenerManager: listener.NewManager(nil),
 			taskManager:     task.NewManager(),
 			config:          &ServerConfig{},
 		}
