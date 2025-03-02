@@ -477,11 +477,14 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+	
+	"github.com/gorilla/websocket"
 )
 
 func main() {
@@ -558,6 +561,57 @@ func main() {
 		<-sigChan
 		fmt.Println("\nShutting down client...")
 		
+	} else if protocols[0] == "websocket" {
+		// For WebSocket protocol
+		fmt.Println("Connecting using WebSocket protocol...")
+		
+		// Create WebSocket URL
+		u := url.URL{Scheme: "ws", Host: *serverAddr, Path: "/ws"}
+		fmt.Printf("Connecting to %s\n", u.String())
+		
+		// Connect to WebSocket server
+		c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+		if err != nil {
+			fmt.Printf("Error connecting to WebSocket server: %v\n", err)
+			os.Exit(1)
+		}
+		defer c.Close()
+		
+		fmt.Println("C2 Client started. Connected to server:", *serverAddr)
+		fmt.Println("Using protocols: websocket")
+		
+		// Setup signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		
+		// Start heartbeat
+		go func() {
+			for {
+				time.Sleep(30 * time.Second)
+				err := c.WriteMessage(websocket.PingMessage, []byte{})
+				if err != nil {
+					fmt.Printf("Error sending WebSocket ping: %v\n", err)
+					return
+				}
+				fmt.Println("Sent WebSocket heartbeat")
+			}
+		}()
+		
+		// Read messages from server
+		go func() {
+			for {
+				_, message, err := c.ReadMessage()
+				if err != nil {
+					fmt.Printf("Error reading from WebSocket server: %v\n", err)
+					return
+				}
+				fmt.Printf("Received message: %s\n", string(message))
+			}
+		}()
+		
+		// Wait for termination signal
+		<-sigChan
+		fmt.Println("\nShutting down client...")
 	} else {
 		// Default to TCP for other protocols
 		conn, err := net.Dial("tcp", *serverAddr)
