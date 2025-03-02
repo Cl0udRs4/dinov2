@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// Import the client template
+// This is needed to access the ClientTemplate constant
+// defined in client_template.go
+
+
 // BuildConfig represents the configuration for building a client
 type BuildConfig struct {
 	OutputFile       string
@@ -483,7 +488,7 @@ func copyClientFiles(config BuildConfig, clientDir string) error {
 	dstMainFile := filepath.Join(cmdClientDir, "main.go")
 	
 	// Write the client template to the main.go file
-	err = os.WriteFile(dstMainFile, []byte(clientTemplate), 0644)
+	err = os.WriteFile(dstMainFile, []byte(ClientTemplate), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write client implementation: %w", err)
 	}
