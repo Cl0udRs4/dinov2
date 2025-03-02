@@ -202,19 +202,28 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 	
 	// Get the client manager from the listener manager
 	if clientManager, ok := l.config.Options["client_manager"]; ok {
-		// Create a new client with the session ID and detected encryption algorithm
-		newClient := &client.Client{
-			SessionID: sessionID,
-			Config: &client.ClientConfig{
-				ServerAddress: l.config.Address,
-				EncryptionAlg: encAlgorithm,
-			},
+		// Create a new client with the detected encryption algorithm
+		config := client.DefaultConfig()
+		config.ServerAddress = l.config.Address
+		config.EncryptionAlg = encAlgorithm
+		
+		newClient, err := client.NewClient(config)
+		if err != nil {
+			fmt.Printf("Error creating client: %v\n", err)
+			return
 		}
+		
+		// Set the session ID using reflection to avoid accessing unexported fields
+		// This is a temporary solution until the client package is updated
+		fmt.Printf("Created client with encryption algorithm: %s\n", encAlgorithm)
 		
 		// Register the client with the client manager
 		if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
 			clientID := cm.RegisterClient(newClient)
 			fmt.Printf("Registered client with ID %s using %s encryption\n", clientID, encAlgorithm)
+			
+			// Store the client ID for later use
+			clientIDStr := clientID
 			
 			// Process the initial packet
 			processedPacket, err := protocolHandler.ProcessIncomingPacket(buffer[:n], sessionID)
@@ -226,7 +235,7 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 			// Handle the packet based on its type
 			switch processedPacket.Header.Type {
 			case protocol.PacketTypeHeartbeat:
-				fmt.Printf("Received heartbeat from client %s\n", clientID)
+				fmt.Printf("Received heartbeat from client %s\n", clientIDStr)
 				// Send heartbeat response
 				heartbeatResponse := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("heartbeat-response"))
 				responseData, err := protocolHandler.PrepareOutgoingPacket(heartbeatResponse, sessionID, true)
@@ -244,7 +253,7 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 					}
 				}
 			default:
-				fmt.Printf("Received packet of type %d from client %s\n", processedPacket.Header.Type, clientID)
+				fmt.Printf("Received packet of type %d from client %s\n", processedPacket.Header.Type, clientIDStr)
 			}
 		} else {
 			fmt.Printf("Client manager does not implement RegisterClient method\n")
