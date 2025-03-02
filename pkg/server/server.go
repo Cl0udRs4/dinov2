@@ -12,8 +12,8 @@ import (
 	"dinoc2/pkg/api/middleware"
 	"dinoc2/pkg/listener"
 	"dinoc2/pkg/auth"
-	"dinoc2/pkg/client/manager"
-	"dinoc2/pkg/module/manager"
+	clientmanager "dinoc2/pkg/client/manager"
+	modulemanager "dinoc2/pkg/module/manager"
 	"dinoc2/pkg/task"
 	
 	"golang.org/x/crypto/bcrypt"
@@ -51,7 +51,7 @@ type ServerConfig struct {
 type serverImpl struct {
 	listenerManager *listener.Manager
 	taskManager     *task.Manager
-	clientManager   *client.Manager
+	clientManager   *clientmanager.ClientManager
 	mutex           sync.RWMutex
 	config          *ServerConfig
 }
@@ -66,7 +66,7 @@ func NewServer() *Server {
 		serverState = &serverImpl{
 			listenerManager: listener.NewManager(),
 			taskManager:     task.NewManager(),
-			clientManager:   manager.NewClientManager(),
+			clientManager:   clientmanager.NewClientManager(),
 			config:          &ServerConfig{},
 		}
 	}
@@ -134,7 +134,7 @@ func (s *Server) Start() error {
 	}
 	
 	// Initialize module manager
-	moduleManager, err := manager.NewModuleManager()
+	moduleManager, err := modulemanager.NewModuleManager()
 	if err != nil {
 		return fmt.Errorf("failed to initialize module manager: %v", err)
 	}
@@ -348,7 +348,7 @@ func (s *Server) GetTaskManager() *task.Manager {
 }
 
 // GetClientManager returns the client manager
-func (s *Server) GetClientManager() *manager.ClientManager {
+func (s *Server) GetClientManager() *clientmanager.ClientManager {
 	if serverState == nil {
 		return nil
 	}
