@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// SessionID is a unique identifier for a client session
-type SessionID string
+// SessionID is defined in crypto.go
 
 // Session represents an encryption session with a client
 type Session struct {
