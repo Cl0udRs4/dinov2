@@ -327,6 +327,20 @@ func buildClient(config BuildConfig, verbose bool) error {
 		"golang.org/x/net/ipv4",
 	}
 	
+	// Explicitly add websocket dependency to go.mod
+	if containsProtocol(config.Protocols, "websocket") {
+		wsCmd := exec.Command("go", "get", "github.com/gorilla/websocket")
+		wsCmd.Dir = config.BuildDir
+		if verbose {
+			wsCmd.Stdout = os.Stdout
+			wsCmd.Stderr = os.Stderr
+		}
+		err = wsCmd.Run()
+		if err != nil {
+			fmt.Printf("Warning: Failed to get websocket dependency: %v\n", err)
+		}
+	}
+	
 	for _, dep := range dependencies {
 		getCmd := exec.Command("go", "get", dep)
 		getCmd.Dir = config.BuildDir
@@ -954,6 +968,16 @@ func replaceImportPathsInDir(dir string) error {
 		}
 		return nil
 	})
+}
+
+// containsProtocol checks if a protocol is in the list of protocols
+func containsProtocol(protocols []string, protocol string) bool {
+	for _, p := range protocols {
+		if p == protocol {
+			return true
+		}
+	}
+	return false
 }
 
 func copyDir(src, dst string) error {
