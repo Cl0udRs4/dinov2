@@ -126,19 +126,14 @@ func (l *TCPListener) handleConnection(conn net.Conn) {
 		return
 	}
 	
-	// Create a new client object
-	newClient := &client.Client{
-		SessionID: sessionID,
-		Address:   conn.RemoteAddr().String(),
-		Protocol:  "tcp",
-		LastSeen:  time.Now(),
-	}
+	// Create a new client with the connection information
+	newClient := client.NewClient(sessionID, conn.RemoteAddr().String(), client.ProtocolTCP)
 	
 	// Register client with client manager if available
 	if l.clientManager != nil {
 		fmt.Printf("DEBUG: Client manager type: %T\n", l.clientManager)
 		
-		// Register client using type assertion
+		// Try to register client using type assertion
 		if cm, ok := l.clientManager.(*client.Manager); ok {
 			clientID := cm.RegisterClient(newClient)
 			fmt.Printf("Registered client with ID %s\n", clientID)

@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 )
 
 // RegisterClientRoutes registers client-related routes
@@ -26,17 +28,20 @@ func (r *Router) handleListClients(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	fmt.Printf("DEBUG: handleListClients called, client manager type: %T\n", r.clientManager)
+
 	// Get clients from client manager
 	clients := r.clientManager.ListClients()
+	fmt.Printf("DEBUG: Got %d clients from client manager\n", len(clients))
 
 	// Convert clients to JSON-friendly format
 	clientsJSON := make([]map[string]interface{}, 0, len(clients))
 	for _, client := range clients {
 		clientJSON := map[string]interface{}{
-			"id":       string(client.SessionID),
-			"address":  client.Address,
-			"protocol": client.Protocol,
-			"last_seen": client.LastSeen,
+			"id":        string(client.SessionID),
+			"address":   client.Address,
+			"protocol":  client.Protocol,
+			"last_seen": client.LastSeen.Format(time.RFC3339),
 		}
 		
 		// Add additional info if available

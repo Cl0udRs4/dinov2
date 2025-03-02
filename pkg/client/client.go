@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// Protocol types
+const (
+	ProtocolTCP       = "tcp"
+	ProtocolHTTP      = "http"
+	ProtocolWebSocket = "websocket"
+	ProtocolDNS       = "dns"
+	ProtocolICMP      = "icmp"
+)
+
 // Client represents a connected client
 type Client struct {
 	SessionID crypto.SessionID

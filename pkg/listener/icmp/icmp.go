@@ -1,312 +1,190 @@
 package icmp
 
 import (
+	"dinoc2/pkg/client"
+	"dinoc2/pkg/crypto"
+	"dinoc2/pkg/protocol"
 	"fmt"
 	"net"
-	"os"
-	"sync"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-	"dinoc2/pkg/client"
-	"dinoc2/pkg/crypto"
-	"dinoc2/pkg/protocol"
 )
 
-// ICMPListener implements the Listener interface for ICMP protocol
+// ICMPListener implements an ICMP listener for the C2 server
 type ICMPListener struct {
-	config     ICMPConfig
-	conn       *icmp.PacketConn
-	status     string
-	statusLock sync.RWMutex
-	stopChan   chan struct{}
-}
-
-// ICMPConfig holds configuration for the ICMP listener
-type ICMPConfig struct {
-	ListenAddress string
-	Protocol      string // "icmp" or "udp"
-	Options       map[string]interface{}
+	config        map[string]interface{}
+	address       string
+	port          int
+	conn          *icmp.PacketConn
+	clientManager interface{}
+	isRunning     bool
 }
 
 // NewICMPListener creates a new ICMP listener
-func NewICMPListener(config ICMPConfig) *ICMPListener {
-	// Set default values if not provided
-	if config.Protocol == "" {
-		// Default to privileged ICMP (requires root)
-		config.Protocol = "icmp"
+func NewICMPListener(config map[string]interface{}) (*ICMPListener, error) {
+	// Extract address and port
+	address, ok := config["address"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid configuration: listener address is required")
 	}
-	if config.ListenAddress == "" {
-		config.ListenAddress = "0.0.0.0"
+	
+	portFloat, ok := config["port"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid configuration: listener port is required")
+	}
+	port := int(portFloat)
+	
+	// Extract options
+	options, ok := config["options"].(map[string]interface{})
+	if !ok {
+		options = make(map[string]interface{})
 	}
 
 	return &ICMPListener{
-		config:   config,
-		status:   "stopped",
-		stopChan: make(chan struct{}),
-	}
+		config:    options,
+		address:   address,
+		port:      port,
+		isRunning: false,
+	}, nil
 }
 
-// Start implements the Listener interface
-func (l *ICMPListener) Start() error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
+// SetClientManager sets the client manager for the listener
+func (l *ICMPListener) SetClientManager(cm interface{}) {
+	l.clientManager = cm
+	fmt.Printf("DEBUG: ICMP listener client manager set: %T\n", cm)
+}
 
-	if l.status == "running" {
-		return fmt.Errorf("ICMP listener is already running")
+// Start starts the ICMP listener
+func (l *ICMPListener) Start() error {
+	if l.isRunning {
+		return fmt.Errorf("listener is already running")
 	}
 
 	// Create ICMP connection
-	// Determine the correct network string format based on protocol
-	var network string
-	if l.config.Protocol == "icmp" {
-		// For privileged raw ICMP endpoints
-		network = "ip4:1" // Use protocol number 1 for ICMP
-	} else {
-		// For non-privileged UDP-based ICMP
-		network = "udp4"
-	}
-	conn, err := icmp.ListenPacket(network, l.config.ListenAddress)
+	conn, err := icmp.ListenPacket("ip4:icmp", l.address)
 	if err != nil {
-		l.status = "error"
-		return fmt.Errorf("failed to start ICMP listener: %w", err)
+		return fmt.Errorf("failed to create ICMP listener: %w", err)
 	}
 
 	l.conn = conn
-	l.status = "running"
-	l.stopChan = make(chan struct{})
+	l.isRunning = true
 
-	// Start listening for ICMP packets in a goroutine
+	fmt.Printf("ICMP listener started on %s\n", l.address)
+
+	// Start listening for ICMP packets
 	go l.listenForPackets()
 
 	return nil
 }
 
-// Stop implements the Listener interface
+// Stop stops the ICMP listener
 func (l *ICMPListener) Stop() error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
-
-	if l.status != "running" {
-		return nil // Already stopped
+	if !l.isRunning {
+		return nil
 	}
 
-	// Signal the listen goroutine to stop
-	close(l.stopChan)
-
-	// Create a new stop channel for future use
-	l.stopChan = make(chan struct{})
-
-	// Close the connection
+	// Close connection
 	if l.conn != nil {
 		err := l.conn.Close()
 		if err != nil {
-			l.status = "error"
-			return fmt.Errorf("error closing ICMP listener: %w", err)
+			return fmt.Errorf("failed to close ICMP connection: %w", err)
 		}
 	}
 
-	l.status = "stopped"
+	l.isRunning = false
+	fmt.Printf("ICMP listener stopped\n")
+
 	return nil
 }
 
-// Status implements the Listener interface
-func (l *ICMPListener) Status() string {
-	l.statusLock.RLock()
-	defer l.statusLock.RUnlock()
-	return l.status
-}
-
-// Configure implements the Listener interface
-func (l *ICMPListener) Configure(config interface{}) error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
-
-	if l.status == "running" {
-		return fmt.Errorf("cannot configure a running ICMP listener")
-	}
-
-	icmpConfig, ok := config.(ICMPConfig)
-	if !ok {
-		return fmt.Errorf("invalid configuration type for ICMP listener")
-	}
-
-	l.config = icmpConfig
-	return nil
-}
-
-// listenForPackets listens for incoming ICMP packets
+// listenForPackets listens for ICMP packets
 func (l *ICMPListener) listenForPackets() {
-	buffer := make([]byte, 1500) // Standard MTU size
+	buffer := make([]byte, 1500)
 
-	for {
-		select {
-		case <-l.stopChan:
-			return
-		default:
-			// Set read deadline to allow for checking the stop channel
-			l.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-
-			n, addr, err := l.conn.ReadFrom(buffer)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// This is just a timeout, continue
-					continue
-				}
-
-				// Check if we're stopping
-				select {
-				case <-l.stopChan:
-					return
-				default:
-					// Actual error occurred
-					l.statusLock.Lock()
-					l.status = "error"
-					l.statusLock.Unlock()
-					fmt.Printf("Error reading ICMP packet: %v\n", err)
-					return
-				}
+	for l.isRunning {
+		n, addr, err := l.conn.ReadFrom(buffer)
+		if err != nil {
+			if l.isRunning {
+				fmt.Printf("Failed to read ICMP packet: %v\n", err)
 			}
-
-			// Process the packet
-			go l.processPacket(buffer[:n], addr)
+			continue
 		}
+
+		// Process packet in a new goroutine
+		go l.processPacket(buffer[:n], addr)
 	}
 }
 
 // processPacket processes an ICMP packet
-func (l *ICMPListener) processPacket(packet []byte, addr net.Addr) {
-	// Parse the ICMP message
-	msg, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), packet)
+func (l *ICMPListener) processPacket(data []byte, addr net.Addr) {
+	// Parse ICMP message
+	msg, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), data)
 	if err != nil {
-		fmt.Printf("Error parsing ICMP message: %v\n", err)
+		fmt.Printf("Failed to parse ICMP message: %v\n", err)
 		return
 	}
 
-	// Check if it's an echo request
-	if msg.Type == ipv4.ICMPTypeEcho {
-		echo := msg.Body.(*icmp.Echo)
-
-		// Extract data from the echo request
-		data := echo.Data
-		
-		// Create a protocol handler for processing the data
-		protocolHandler := protocol.NewProtocolHandler()
-		
-		// Generate a unique session ID
-		sessionID := crypto.GenerateSessionID()
-		
-		// Process the data if it's long enough to be a valid packet
-		// HeaderSize is 12 bytes based on protocol/encoder.go
-		if len(data) > 12 {
-			// Decode the packet to get the encryption algorithm
-			packet, err := protocol.DecodePacket(data)
-			if err != nil {
-				fmt.Printf("Error decoding ICMP packet data: %v\n", err)
-				return
-			}
-			
-			// Determine the encryption algorithm from the packet header
-			var encAlgorithm string
-			var cryptoAlgorithm crypto.Algorithm
-			switch packet.Header.EncAlgorithm {
-			case protocol.EncryptionAlgorithmAES:
-				encAlgorithm = "aes"
-				cryptoAlgorithm = crypto.AlgorithmAES
-			case protocol.EncryptionAlgorithmChacha20:
-				encAlgorithm = "chacha20"
-				cryptoAlgorithm = crypto.AlgorithmChacha20
-			default:
-				encAlgorithm = "aes" // Default to AES if not specified
-				cryptoAlgorithm = crypto.AlgorithmAES
-			}
-			
-			fmt.Printf("Detected encryption algorithm for ICMP request: %s\n", encAlgorithm)
-			
-			// Create a session with the detected encryption algorithm
-			err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
-			if err != nil {
-				fmt.Printf("Error creating session for ICMP data with %s: %v\n", encAlgorithm, err)
-				return
-			}
-			
-			// Get the client manager from the options if available
-			if l.config.Options != nil {
-				if clientManager, ok := l.config.Options["client_manager"]; ok {
-					// Create a new client with the detected encryption algorithm
-					config := client.DefaultConfig()
-					config.ServerAddress = l.config.ListenAddress
-					config.EncryptionAlg = encAlgorithm
-					
-					newClient, err := client.NewClient(config)
-					if err != nil {
-						fmt.Printf("Error creating client: %v\n", err)
-					} else {
-						// Register the client with the client manager
-						if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
-							clientID := cm.RegisterClient(newClient)
-							fmt.Printf("Registered ICMP client with ID %s using %s encryption\n", clientID, encAlgorithm)
-						}
-					}
-				}
-			}
-			
-			// Handle packet based on type
-			switch packet.Header.Type {
-			case protocol.PacketTypeKeyExchange:
-				fmt.Printf("Received key exchange from %s via ICMP\n", addr)
-			case protocol.PacketTypeHeartbeat:
-				fmt.Printf("Received heartbeat from %s via ICMP\n", addr)
-			default:
-				fmt.Printf("Received packet type %d from %s via ICMP\n", packet.Header.Type, addr)
-			}
-		} else {
-			fmt.Printf("Received ICMP echo request from %s (data too short for protocol)\n", addr)
-		}
-		
-		// Clean up
-		protocolHandler.RemoveSession(sessionID)
-		
-		// Send an echo reply
-		l.sendEchoReply(addr, echo.ID, echo.Seq, echo.Data)
+	// Only process echo requests
+	if msg.Type != ipv4.ICMPTypeEcho {
+		return
 	}
-}
 
-// sendEchoReply sends an ICMP echo reply
-func (l *ICMPListener) sendEchoReply(addr net.Addr, id, seq int, data []byte) {
-	// Create an echo reply message
-	msg := icmp.Message{
+	// Extract echo data
+	echo, ok := msg.Body.(*icmp.Echo)
+	if !ok {
+		fmt.Printf("Failed to extract echo data\n")
+		return
+	}
+
+	// Create a protocol handler for processing the data
+	protocolHandler := protocol.NewProtocolHandler()
+	
+	// Generate a unique session ID
+	sessionID := crypto.GenerateSessionID()
+	
+	// Create a new client with the connection information
+	newClient := client.NewClient(sessionID, addr.String(), client.ProtocolICMP)
+	
+	// Register client with client manager if available
+	if l.clientManager != nil {
+		fmt.Printf("DEBUG: ICMP client manager type: %T\n", l.clientManager)
+		
+		// Try to register client using type assertion
+		if cm, ok := l.clientManager.(*client.Manager); ok {
+			clientID := cm.RegisterClient(newClient)
+			fmt.Printf("Registered ICMP client with ID %s\n", clientID)
+		} else {
+			fmt.Printf("Client manager does not implement RegisterClient method or is not of type *client.Manager\n")
+		}
+	} else {
+		fmt.Printf("No client manager available\n")
+	}
+
+	// Create echo reply
+	reply := &icmp.Message{
 		Type: ipv4.ICMPTypeEchoReply,
 		Code: 0,
 		Body: &icmp.Echo{
-			ID:   id,
-			Seq:  seq,
-			Data: data,
+			ID:   echo.ID,
+			Seq:  echo.Seq,
+			Data: echo.Data,
 		},
 	}
 
-	// Marshal the message
-	msgBytes, err := msg.Marshal(nil)
+	// Marshal reply
+	replyBytes, err := reply.Marshal(nil)
 	if err != nil {
-		fmt.Printf("Error marshaling ICMP echo reply: %v\n", err)
+		fmt.Printf("Failed to marshal ICMP reply: %v\n", err)
 		return
 	}
 
-	// Send the reply
-	_, err = l.conn.WriteTo(msgBytes, addr)
+	// Send reply
+	_, err = l.conn.WriteTo(replyBytes, addr)
 	if err != nil {
-		fmt.Printf("Error sending ICMP echo reply: %v\n", err)
+		fmt.Printf("Failed to send ICMP reply: %v\n", err)
 	}
-}
-
-// RequiresPrivileges returns true if the listener requires elevated privileges
-func (l *ICMPListener) RequiresPrivileges() bool {
-	return l.config.Protocol == "icmp"
-}
-
-// CheckPrivileges checks if the process has the necessary privileges
-func CheckPrivileges() bool {
-	// On Unix systems, check if we're running as root
-	return os.Geteuid() == 0
 }

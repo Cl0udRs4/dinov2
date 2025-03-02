@@ -1,39 +1,44 @@
 {
-    "listeners": [
-        {
-            "id": "tcp1",
-            "type": "tcp",
-            "address": "0.0.0.0",
-            "port": 8080,
-            "options": {}
-        },
-        {
-            "id": "http1",
-            "type": "http",
-            "address": "0.0.0.0",
-            "port": 8000,
-            "options": {}
-        },
-        {
-            "id": "ws1",
-            "type": "websocket",
-            "address": "0.0.0.0",
-            "port": 8001,
-            "options": {}
-        }
-    ],
-    "api": {
-        "enabled": true,
-        "address": "127.0.0.1",
-        "port": 8443,
-        "tls": false,
-        "auth_enabled": true,
-        "jwt_secret": "test_secret_key",
-        "token_expiry": 60
+  "api": {
+    "enabled": true,
+    "address": "127.0.0.1",
+    "port": 8443,
+    "tls_enabled": false,
+    "auth_enabled": true,
+    "jwt_secret": "test_secret",
+    "token_expiry": 60
+  },
+  "user_auth": {
+    "username": "admin",
+    "password_hash": "$2a$10$1pczEsLMBx6rNDfsyV2oyeTzM0fFs13k5ecWbOMbYqh8n9Mpgd4Wa",
+    "role": "admin"
+  },
+  "listeners": [
+    {
+      "id": "tcp1",
+      "type": "tcp",
+      "address": "0.0.0.0",
+      "port": 8080,
+      "options": {}
     },
-    "user_auth": {
-        "username": "admin",
-        "password": "testpassword",
-        "role": "admin"
+    {
+      "id": "http1",
+      "type": "http",
+      "address": "0.0.0.0",
+      "port": 8000,
+      "options": {
+        "enable_api": true,
+        "use_http2": true
+      }
+    },
+    {
+      "id": "ws1",
+      "type": "websocket",
+      "address": "0.0.0.0",
+      "port": 8001,
+      "options": {
+        "path": "/ws"
+      }
     }
+  ]
 }

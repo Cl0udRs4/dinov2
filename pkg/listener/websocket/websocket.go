@@ -1,310 +1,199 @@
 package websocket
 
 import (
-	"fmt"
-	"net/http"
-	"sync"
-
-	"github.com/gorilla/websocket"
 	"dinoc2/pkg/client"
 	"dinoc2/pkg/crypto"
 	"dinoc2/pkg/protocol"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
-// WebSocketListener implements the Listener interface for WebSocket protocol
+// WebSocketListener implements a WebSocket listener for the C2 server
 type WebSocketListener struct {
-	config     WebSocketConfig
-	server     *http.Server
-	status     string
-	statusLock sync.RWMutex
-	upgrader   websocket.Upgrader
-	clients    map[*websocket.Conn]bool
-	clientLock sync.RWMutex
-}
-
-// WebSocketConfig holds configuration for the WebSocket listener
-type WebSocketConfig struct {
-	Address     string
-	Port        int
-	Path        string
-	TLSCertFile string
-	TLSKeyFile  string
-	Options     map[string]interface{}
+	config        map[string]interface{}
+	address       string
+	port          int
+	path          string
+	server        *http.Server
+	upgrader      websocket.Upgrader
+	clientManager interface{}
+	isRunning     bool
 }
 
 // NewWebSocketListener creates a new WebSocket listener
-func NewWebSocketListener(config WebSocketConfig) *WebSocketListener {
-	// Set default path if not provided
-	if config.Path == "" {
-		config.Path = "/ws"
+func NewWebSocketListener(config map[string]interface{}) (*WebSocketListener, error) {
+	// Extract address and port
+	address, ok := config["address"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid configuration: listener address is required")
+	}
+	
+	portFloat, ok := config["port"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid configuration: listener port is required")
+	}
+	port := int(portFloat)
+	
+	// Extract options
+	options, ok := config["options"].(map[string]interface{})
+	if !ok {
+		options = make(map[string]interface{})
+	}
+	
+	// Extract path
+	path, ok := options["path"].(string)
+	if !ok {
+		path = "/ws"
 	}
 
 	return &WebSocketListener{
-		config: config,
-		status: "stopped",
-		upgrader: websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
-			// Allow all origins for now
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
-		clients: make(map[*websocket.Conn]bool),
-	}
+		config:    options,
+		address:   address,
+		port:      port,
+		path:      path,
+		upgrader:  websocket.Upgrader{},
+		isRunning: false,
+	}, nil
 }
 
-// Start implements the Listener interface
-func (l *WebSocketListener) Start() error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
+// SetClientManager sets the client manager for the listener
+func (l *WebSocketListener) SetClientManager(cm interface{}) {
+	l.clientManager = cm
+	fmt.Printf("DEBUG: WebSocket listener client manager set: %T\n", cm)
+}
 
-	if l.status == "running" {
-		return fmt.Errorf("WebSocket listener is already running")
+// Start starts the WebSocket listener
+func (l *WebSocketListener) Start() error {
+	if l.isRunning {
+		return fmt.Errorf("listener is already running")
 	}
 
-	// Create a new HTTP server for the WebSocket
-	addr := fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
-	
-	// Create a router/mux for handling requests
+	// Create HTTP server
 	mux := http.NewServeMux()
-	
-	// Register the WebSocket handler
-	mux.HandleFunc(l.config.Path, l.handleWebSocket)
+	mux.HandleFunc(l.path, l.handleWebSocket)
 	
 	l.server = &http.Server{
-		Addr:    addr,
+		Addr:    fmt.Sprintf("%s:%d", l.address, l.port),
 		Handler: mux,
 	}
-	
-	// Start the server in a goroutine
+
+	// Start server in a goroutine
 	go func() {
-		var err error
-		
-		// Check if TLS is configured
-		if l.config.TLSCertFile != "" && l.config.TLSKeyFile != "" {
-			err = l.server.ListenAndServeTLS(l.config.TLSCertFile, l.config.TLSKeyFile)
-		} else {
-			err = l.server.ListenAndServe()
-		}
-		
+		err := l.server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
-			l.statusLock.Lock()
-			l.status = "error"
-			l.statusLock.Unlock()
-			fmt.Printf("Error starting WebSocket listener: %v\n", err)
+			fmt.Printf("WebSocket server error: %v\n", err)
 		}
 	}()
-	
-	l.status = "running"
+
+	l.isRunning = true
+	fmt.Printf("WebSocket listener started on %s:%d%s\n", l.address, l.port, l.path)
+
 	return nil
 }
 
-// Stop implements the Listener interface
+// Stop stops the WebSocket listener
 func (l *WebSocketListener) Stop() error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
-
-	if l.status != "running" {
-		return nil // Already stopped
+	if !l.isRunning {
+		return nil
 	}
 
-	// Close all client connections
-	l.clientLock.Lock()
-	for client := range l.clients {
-		client.Close()
-		delete(l.clients, client)
-	}
-	l.clientLock.Unlock()
-
-	// Shutdown the server
+	// Close server
 	if l.server != nil {
 		err := l.server.Close()
 		if err != nil {
-			l.status = "error"
-			return fmt.Errorf("error stopping WebSocket listener: %w", err)
+			return fmt.Errorf("failed to close WebSocket server: %w", err)
 		}
 	}
 
-	l.status = "stopped"
+	l.isRunning = false
+	fmt.Printf("WebSocket listener stopped\n")
+
 	return nil
 }
 
-// Status implements the Listener interface
-func (l *WebSocketListener) Status() string {
-	l.statusLock.RLock()
-	defer l.statusLock.RUnlock()
-	return l.status
-}
-
-// Configure implements the Listener interface
-func (l *WebSocketListener) Configure(config interface{}) error {
-	l.statusLock.Lock()
-	defer l.statusLock.Unlock()
-
-	if l.status == "running" {
-		return fmt.Errorf("cannot configure a running WebSocket listener")
-	}
-
-	wsConfig, ok := config.(WebSocketConfig)
-	if !ok {
-		return fmt.Errorf("invalid configuration type for WebSocket listener")
-	}
-
-	l.config = wsConfig
-	return nil
-}
-
-// handleWebSocket handles WebSocket connections
+// handleWebSocket handles a WebSocket connection
 func (l *WebSocketListener) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Upgrade the HTTP connection to a WebSocket connection
+	// Upgrade HTTP connection to WebSocket
 	conn, err := l.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Printf("Error upgrading to WebSocket: %v\n", err)
+		fmt.Printf("Failed to upgrade connection: %v\n", err)
 		return
 	}
-	
-	// Register the client
-	l.clientLock.Lock()
-	l.clients[conn] = true
-	l.clientLock.Unlock()
-	
-	// Handle the connection in a goroutine
-	go l.handleConnection(conn)
-}
+	defer conn.Close()
 
-// handleConnection processes a WebSocket connection
-func (l *WebSocketListener) handleConnection(conn *websocket.Conn) {
-	defer func() {
-		// Unregister the client when the function returns
-		l.clientLock.Lock()
-		delete(l.clients, conn)
-		l.clientLock.Unlock()
-		
-		// Close the connection
-		conn.Close()
-	}()
-	
-	for {
-		// Read message from the client
-		messageType, message, err := conn.ReadMessage()
-		if err != nil {
-			// Check if it's a normal close
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Printf("WebSocket error: %v\n", err)
-			}
-			break
-		}
-		
-		// Process the message
-		go l.processMessage(conn, messageType, message)
-	}
-}
+	fmt.Printf("New WebSocket connection from %s\n", conn.RemoteAddr())
 
-// processMessage processes a WebSocket message
-func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int, message []byte) {
-	fmt.Printf("Received WebSocket message from %s\n", conn.RemoteAddr())
-	
 	// Create a protocol handler for processing the data
 	protocolHandler := protocol.NewProtocolHandler()
 	
 	// Generate a unique session ID
 	sessionID := crypto.GenerateSessionID()
 	
-	// Decode the packet to get the encryption algorithm
-	packet, err := protocol.DecodePacket(message)
-	if err != nil {
-		fmt.Printf("Error decoding WebSocket packet data: %v\n", err)
-		// Echo the message back for invalid packets
-		conn.WriteMessage(messageType, message)
-		return
+	// Create a new client with the connection information
+	newClient := client.NewClient(sessionID, conn.RemoteAddr().String(), client.ProtocolWebSocket)
+	
+	// Register client with client manager if available
+	if l.clientManager != nil {
+		fmt.Printf("DEBUG: WebSocket client manager type: %T\n", l.clientManager)
+		
+		// Try to register client using type assertion
+		if cm, ok := l.clientManager.(*client.Manager); ok {
+			clientID := cm.RegisterClient(newClient)
+			fmt.Printf("Registered WebSocket client with ID %s\n", clientID)
+		} else {
+			fmt.Printf("Client manager does not implement RegisterClient method or is not of type *client.Manager\n")
+		}
+	} else {
+		fmt.Printf("No client manager available\n")
 	}
-	
-	// Determine the encryption algorithm from the packet header
-	var encAlgorithm string
-	var cryptoAlgorithm crypto.Algorithm
-	switch packet.Header.EncAlgorithm {
-	case protocol.EncryptionAlgorithmAES:
-		encAlgorithm = "aes"
-		cryptoAlgorithm = crypto.AlgorithmAES
-	case protocol.EncryptionAlgorithmChacha20:
-		encAlgorithm = "chacha20"
-		cryptoAlgorithm = crypto.AlgorithmChacha20
-	default:
-		encAlgorithm = "aes" // Default to AES if not specified
-		cryptoAlgorithm = crypto.AlgorithmAES
-	}
-	
-	fmt.Printf("Detected encryption algorithm for WebSocket connection: %s\n", encAlgorithm)
-	
-	// Create a session with the detected encryption algorithm
-	err = protocolHandler.CreateSession(sessionID, cryptoAlgorithm)
-	if err != nil {
-		fmt.Printf("Error creating session for WebSocket data with %s: %v\n", encAlgorithm, err)
-		return
-	}
-	
-	// Get the client manager from the options if available
-	if l.config.Options != nil {
-		if clientManager, ok := l.config.Options["client_manager"]; ok {
-			// Create a new client with the detected encryption algorithm
-			config := client.DefaultConfig()
-			config.ServerAddress = fmt.Sprintf("%s:%d", l.config.Address, l.config.Port)
-			config.EncryptionAlg = encAlgorithm
-			
-			newClient, err := client.NewClient(config)
+
+	// Read messages from the WebSocket
+	for {
+		messageType, message, err := conn.ReadMessage()
+		if err != nil {
+			fmt.Printf("WebSocket connection closed: %v\n", err)
+			break
+		}
+
+		// Only process binary messages
+		if messageType != websocket.BinaryMessage {
+			fmt.Printf("Received non-binary message, ignoring\n")
+			continue
+		}
+
+		// Decode the packet
+		packet, err := protocol.DecodePacket(message)
+		if err != nil {
+			fmt.Printf("Failed to decode packet: %v\n", err)
+			continue
+		}
+
+		// Create a session with the encryption algorithm if not already created
+		if !protocolHandler.HasSession(sessionID) {
+			err = protocolHandler.CreateSession(sessionID, packet.Algorithm)
 			if err != nil {
-				fmt.Printf("Error creating client: %v\n", err)
-			} else {
-				// Register the client with the client manager
-				if cm, ok := clientManager.(interface{ RegisterClient(*client.Client) string }); ok {
-					clientID := cm.RegisterClient(newClient)
-					fmt.Printf("Registered WebSocket client with ID %s using %s encryption\n", clientID, encAlgorithm)
-				}
+				fmt.Printf("Failed to create session: %v\n", err)
+				continue
 			}
 		}
-	}
-	
-	// Handle packet based on type
-	var responseData []byte
-	
-	switch packet.Header.Type {
-	case protocol.PacketTypeKeyExchange:
-		fmt.Printf("Received key exchange from %s via WebSocket\n", conn.RemoteAddr())
-		// Create a response packet with the same session ID
-		responsePacket := protocol.NewPacket(protocol.PacketTypeKeyExchange, []byte(string(sessionID)))
-		responseData = protocol.EncodePacket(responsePacket)
-		
-	case protocol.PacketTypeHeartbeat:
-		fmt.Printf("Received heartbeat from %s via WebSocket\n", conn.RemoteAddr())
-		// Create a heartbeat response
-		responsePacket := protocol.NewPacket(protocol.PacketTypeHeartbeat, []byte("pong"))
-		responseData = protocol.EncodePacket(responsePacket)
-		
-	default:
-		fmt.Printf("Received packet type %d from %s via WebSocket\n", packet.Header.Type, conn.RemoteAddr())
-		// Echo back the packet for other types
-		responseData = protocol.EncodePacket(packet)
-	}
-	
-	// Clean up
-	protocolHandler.RemoveSession(sessionID)
-	
-	// Send the response
-	err = conn.WriteMessage(messageType, responseData)
-	if err != nil {
-		fmt.Printf("Error writing WebSocket message: %v\n", err)
-	}
-}
 
-// Broadcast sends a message to all connected clients
-func (l *WebSocketListener) Broadcast(message []byte) {
-	l.clientLock.RLock()
-	defer l.clientLock.RUnlock()
-	
-	for client := range l.clients {
-		err := client.WriteMessage(websocket.TextMessage, message)
+		// Process the packet
+		response, err := protocolHandler.ProcessPacket(packet)
 		if err != nil {
-			fmt.Printf("Error broadcasting to client: %v\n", err)
-			client.Close()
+			fmt.Printf("Failed to process packet: %v\n", err)
+			continue
+		}
+
+		// Send response
+		err = conn.WriteMessage(websocket.BinaryMessage, response)
+		if err != nil {
+			fmt.Printf("Failed to send response: %v\n", err)
+			break
 		}
 	}
 }
