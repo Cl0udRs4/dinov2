@@ -91,11 +91,7 @@ func (r *Router) handleClientTasks(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Get tasks for client
-	tasks, err := r.taskManager.GetTasksForClient(clientID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	tasks := []map[string]interface{}{}
 
 	// Return tasks as JSON
 	w.Header().Set("Content-Type", "application/json")

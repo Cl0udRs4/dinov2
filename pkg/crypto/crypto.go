@@ -17,7 +17,7 @@ const (
 	AlgorithmChacha20 Algorithm = "chacha20"
 )
 
-// SessionID represents a unique session identifier
+// SessionID represents a session ID
 type SessionID string
 
 // Encryptor interface defines methods that all encryption implementations must support
