@@ -211,8 +211,8 @@ func (l *HTTPListener) defaultHandler(w http.ResponseWriter, r *http.Request) {
 		// Create a protocol handler for processing the data
 		protocolHandler := protocol.NewProtocolHandler()
 		
-		// Generate a session ID based on the connection address
-		sessionID := crypto.SessionID(r.RemoteAddr)
+		// Generate a unique session ID
+		sessionID := crypto.GenerateSessionID()
 		
 		// Decode the packet to get the encryption algorithm
 		packet, err := protocol.DecodePacket(body)

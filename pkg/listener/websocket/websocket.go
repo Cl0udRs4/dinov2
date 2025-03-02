@@ -206,8 +206,8 @@ func (l *WebSocketListener) processMessage(conn *websocket.Conn, messageType int
 	// Create a protocol handler for processing the data
 	protocolHandler := protocol.NewProtocolHandler()
 	
-	// Generate a session ID based on the connection address
-	sessionID := crypto.SessionID(conn.RemoteAddr().String())
+	// Generate a unique session ID
+	sessionID := crypto.GenerateSessionID()
 	
 	// Decode the packet to get the encryption algorithm
 	packet, err := protocol.DecodePacket(message)

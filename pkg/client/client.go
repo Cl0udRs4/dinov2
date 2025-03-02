@@ -117,7 +117,7 @@ func NewClient(config *ClientConfig) (*Client, error) {
 	client := &Client{
 		config:          config,
 		protocolHandler: protocol.NewProtocolHandler(),
-		sessionID:       crypto.SessionID(generateSessionID()),
+		sessionID:       crypto.GenerateSessionID(),
 		currentProtocol: config.Protocols[0],
 		protocolIndex:   0,
 		state:           StateDisconnected,
@@ -801,11 +801,7 @@ func (c *Client) setState(state ConnectionState) {
 	c.state = state
 }
 
-// generateSessionID generates a unique session ID
-func generateSessionID() string {
-	// Generate a timestamp-based ID
-	return fmt.Sprintf("client-%d", time.Now().UnixNano())
-}
+// Note: generateSessionID function has been replaced with crypto.GenerateSessionID()
 
 // runAntiDebugChecks runs periodic anti-debugging checks
 func (c *Client) runAntiDebugChecks() {

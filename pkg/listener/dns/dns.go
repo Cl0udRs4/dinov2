@@ -254,8 +254,8 @@ func (l *DNSListener) processData(data string, addr net.Addr) {
 	// Create a protocol handler for processing the data
 	protocolHandler := protocol.NewProtocolHandler()
 	
-	// Generate a session ID based on the connection address
-	sessionID := crypto.SessionID(addr.String())
+	// Generate a unique session ID
+	sessionID := crypto.GenerateSessionID()
 	
 	// Decode the packet to get the encryption algorithm
 	packet, err := protocol.DecodePacket([]byte(data))

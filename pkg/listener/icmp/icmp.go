@@ -194,8 +194,8 @@ func (l *ICMPListener) processPacket(packet []byte, addr net.Addr) {
 		// Create a protocol handler for processing the data
 		protocolHandler := protocol.NewProtocolHandler()
 		
-		// Generate a session ID based on the connection address and echo ID
-		sessionID := crypto.SessionID(fmt.Sprintf("%s-%d", addr.String(), echo.ID))
+		// Generate a unique session ID
+		sessionID := crypto.GenerateSessionID()
 		
 		// Process the data if it's long enough to be a valid packet
 		// HeaderSize is 12 bytes based on protocol/encoder.go

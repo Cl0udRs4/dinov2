@@ -1,7 +1,10 @@
 package crypto
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
+	"io"
 	"time"
 )
 
@@ -12,6 +15,9 @@ const (
 	AlgorithmAES      Algorithm = "aes"
 	AlgorithmChacha20 Algorithm = "chacha20"
 )
+
+// SessionID is a unique identifier for a client session
+type SessionID string
 
 // Encryptor interface defines methods that all encryption implementations must support
 type Encryptor interface {
@@ -47,4 +53,15 @@ func Factory(algorithm Algorithm) (Encryptor, error) {
 	default:
 		return nil, errors.New("unsupported encryption algorithm")
 	}
+}
+
+// GenerateSessionID generates a new random session ID
+func GenerateSessionID() SessionID {
+	b := make([]byte, 16)
+	_, err := io.ReadFull(rand.Reader, b)
+	if err != nil {
+		// If random fails, use a timestamp-based ID
+		return SessionID(fmt.Sprintf("client-%d", time.Now().UnixNano()))
+	}
+	return SessionID(fmt.Sprintf("client-%x", b))
 }
